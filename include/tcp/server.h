@@ -1,33 +1,18 @@
 #pragma once
-#include "tcp/acceptor.h"
-#include "tcp/connector.h"
-#include "tcp/tempptr.h"
-#include <cstddef>
-#include <functional>
 
+#include <functional>
 namespace tcp
 {
-class InetAddress;
-class IoContext;
+class TaskRunner;
 class Server
 {
   public:
+    using StartTask = std::function<void(Server&)>;
     Server();
     ~Server();
-    void start();
-    void stop();
-    // 加入一个Acceptor
-    std::size_t newAcceptor(const InetAddress& listenAddr, const Acceptor::Tasks& tasks);
-    std::size_t newConnection(int clientfd, const InetAddress& peerAddr, const Connection::Tasks& tasks);
-    // 加入一个Connector
-    std::size_t newConnector(const InetAddress& serverAddr, const Connector::Tasks& tasks);
-
-    // 线程安全，对id进行操作
-    template <typename T> void doTask(std::size_t id, const std::function<void(TempPtr<T>)>& task);
-
-  private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    TaskRunner* getTaskRunner() const;
+    TaskRunner* getCurrentTaskRunner() const;
+    void start(const StartTask&, double delay = 0.0);
 };
 
 } // namespace tcp

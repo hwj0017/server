@@ -1,10 +1,7 @@
 #include "tcp/connection.h"
 #include "buffer.h"
-#include "channel.h"
-#include "connectionimpl.h"
-#include "iocontext.h"
+#include "taskrunner.h"
 #include "tcp/inetaddress.h"
-#include "utils/log.h"
 #include <cassert>
 #include <cerrno>
 #include <cstddef>
@@ -15,76 +12,90 @@
 #include <unistd.h>
 namespace tcp
 {
-Connection::Connection(int clientfd, IoContext* ioContext, std::size_t id, const InetAddress& peerAddr,
-                       const Tasks& tasks, const ReleaseTask& releaseTask)
+struct Connection::Impl
 {
-    impl_ = std::make_unique<Impl<Connection>>(clientfd, ioContext, id, peerAddr, tasks, releaseTask);
-    impl_->channel_.setReadTask([this]() {
-        if (impl_->readBuffer_.readSocket(impl_->fd_) >= 0)
-        {
-            if (impl_->messageTask_)
-                impl_->messageTask_(this, impl_->readBuffer_.begin(), impl_->readBuffer_.size());
-            impl_->readBuffer_.clear();
-        }
-        else
-        {
-            stop();
-        }
-    });
-    impl_->channel_.setWriteTask([this]() {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_, std::string()) >= 0)
-        {
-            if (impl_->writeBuffer_.size() > 0)
-            {
-                impl_->channel_.setType(Channel::Type::kBoth);
-                impl_->ioContext_->updateChannel(&impl_->channel_);
-            }
-            impl_->writeBuffer_.clear();
-        }
-        else
-        {
-            stop();
-        }
-    });
+    int fd_;
+    TaskRunner* taskRunner_;
+    Tasks tasks_;
+    InetAddress peerAddr_;
+    Buffer readBuffer_;
+    Buffer writeBuffer_;
+    Impl(int fd, TaskRunner* taskRunner, const InetAddress& peerAddr, const Tasks& tasks)
+        : fd_(fd), taskRunner_(taskRunner), tasks_(tasks), peerAddr_(peerAddr)
+    {
+    }
+    ~Impl()
+    {
+        ::close(fd_);
+    }
+};
+Connection::Connection(int clientfd, TaskRunner* taskRunner, const InetAddress& peerAddr, const Tasks& tasks)
+{
+    impl_ = std::make_unique<Impl>(clientfd, taskRunner, peerAddr, tasks);
 }
 
 Connection::~Connection() = default;
 
+void Connection::start()
+{
+    impl_->taskRunner_->runTask([this]() {
+        impl_->taskRunner_->addObject(impl_->fd_, shared_from_this());
+        impl_->taskRunner_->addIoTask(impl_->fd_, TaskRunner::IoType::kRead, [this]() {
+            if (impl_->readBuffer_.readSocket(impl_->fd_) >= 0)
+            {
+                auto& task = impl_->tasks_.messageTask;
+                if (task)
+                    task(this, impl_->readBuffer_.begin(), impl_->readBuffer_.size());
+                impl_->readBuffer_.clear();
+            }
+            else
+            {
+                stop();
+            }
+        });
+        if (impl_->tasks_.startTask)
+            impl_->tasks_.startTask(this);
+    });
+}
 void Connection::send(const std::string& data)
 {
-    if (data.length() > 0)
-    {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_, data) >= 0)
-        {
-            if (impl_->writeBuffer_.size() > 0)
-            {
-                impl_->channel_.setType(Channel::Type::kBoth);
-                impl_->ioContext_->updateChannel(&impl_->channel_);
-            }
-        }
-        else
-        {
-            stop();
-        }
-    }
+    return send(data.data(), data.size());
 }
 
 void Connection::send(const void* data, std::size_t len)
 {
-    if (len > 0)
-    {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_, data, len) >= 0)
+    return send(std::string(static_cast<const char*>(data), len));
+}
+
+void Connection::send(std::string&& data)
+{
+    impl_->taskRunner_->runTask([this, data = std::move(data)]() {
+        if (impl_->writeBuffer_.writeSocket(impl_->fd_, data) >= 0)
         {
             if (impl_->writeBuffer_.size() > 0)
             {
-                impl_->channel_.setType(Channel::Type::kBoth);
-                impl_->ioContext_->updateChannel(&impl_->channel_);
+                // 缓冲区未清空，继续监听写事件
+                impl_->taskRunner_->addIoTask(impl_->fd_, TaskRunner::IoType::kWrite, [this]() {
+                    if (impl_->writeBuffer_.writeSocket(impl_->fd_) >= 0)
+                    {
+                        // 发送缓冲区已清空，停止写事件监听
+                        if (impl_->writeBuffer_.size() <= 0)
+                        {
+                            impl_->taskRunner_->removeIoTask(impl_->fd_, TaskRunner::IoType::kWrite);
+                            impl_->writeBuffer_.clear();
+                        }
+                    }
+                    else
+                    {
+                        stop();
+                    }
+                });
             }
         }
         else
         {
             stop();
         }
-    }
+    });
 }
 } // namespace tcp

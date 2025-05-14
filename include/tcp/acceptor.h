@@ -1,28 +1,38 @@
 #pragma once
-#include "tcp/baseobject.h"
-#include "tcp/connection.h"
+
 #include "tcp/inetaddress.h"
-#include "tcp/tempptr.h"
-#include <cstddef>
+#include <any>
 #include <functional>
 #include <memory>
 namespace tcp
 {
-class Acceptor : public BaseObject<Acceptor>
+class TaskRunner;
+class Acceptor : public std::enable_shared_from_this<Acceptor>
 {
   public:
-    // 在接收连接是获取连接的回调,返回值表示是否接收连接
-    using AcceptTask = std::function<void(const TempPtr<Acceptor>&, int clientfd, const InetAddress& peerAddr)>;
+    using Task = std::function<void(Acceptor*)>;
+    using StartTask = std::function<void(Acceptor*)>;
+    using StopTask = std::function<void(Acceptor*)>;
+    using AcceptTask = std::function<void(Acceptor* acceptor, int clientfd, const InetAddress& peerAddr)>;
+
     struct Tasks
     {
         StartTask startTask;
         StopTask stopTask;
         AcceptTask acceptTask;
     };
-    explicit Acceptor(IoContext* ioContext, std::size_t id, const InetAddress& listenAddr, const Tasks& tasks,
-                      const ReleaseTask& releaseTask);
+    explicit Acceptor(TaskRunner* taskRunner, const InetAddress& listenAddr, const Tasks& tasks);
     ~Acceptor();
+    void start();
+    void stop();
+    // 后续考虑需不需要用shared_ptr
+    void doTask(const Task& task, double deley = 0.0, double interval = 0.0);
+    void setContext(std::any context);
+    std::any& getContext();
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
-extern template class BaseObject<Acceptor>;
 } // namespace tcp

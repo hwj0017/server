@@ -132,8 +132,4 @@ int Buffer::writeSocket(int fd, const void* data, size_t len)
     return writeNumTotal;
 }
 
-int Buffer::writeSocket(int fd, const std::string& data)
-{
-    return writeSocket(fd, data.data(), data.size());
-}
 } // namespace tcp

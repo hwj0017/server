@@ -1,5 +1,4 @@
 #include "epoller.h"
-#include "channel.h"
 #include <cassert>
 #include <sys/epoll.h>
 #include <unistd.h>
@@ -17,65 +16,75 @@ Epoller::~Epoller()
     close(epfd_);
 }
 
-std::vector<Channel*> Epoller::poll(int timeout)
+auto Epoller::poll(int timeout) -> std::vector<Action>
 {
     auto eventsNum = epoll_wait(epfd_, events_, kEventSize, timeout);
     assert(eventsNum >= 0);
-    std::vector<Channel*> activeObjs(eventsNum);
+    std::vector<Action> actions(eventsNum);
 
     for (auto i = 0; i < eventsNum; ++i)
     {
-        auto obj = static_cast<Channel*>(events_[i].data.ptr);
+        auto fd = events_[i].data.fd;
         auto event = events_[i].events;
-        auto type = Channel::Type::kNone;
+        Type type = Type::kNone;
         if (event & EPOLLIN && event & EPOLLOUT)
         {
-            type = Channel::Type::kBoth;
+            type = Type::kBoth;
         }
         else if (event & EPOLLIN)
         {
-            type = Channel::Type::kReadable;
+            type = Type::kReadable;
         }
         else
-            type = Channel::Type::kWriteable;
-        obj->setExpiredType(type);
-        activeObjs[i] = obj;
+            type = Type::kWriteable;
+        actions[i] = {fd, type};
     }
-    return activeObjs;
+    return actions;
 }
 
-void Epoller::update(Channel* channel)
+void Epoller::update(int fd, Type type)
 {
-    assert(channel != nullptr);
-    auto fd = channel->fd();
     assert(fd >= 0);
-    auto it = channels_.find(fd);
-    auto type = channel->type();
-    if (type != Channel::kNone)
+    auto it = attachedFds_.find(fd);
+    if (it == attachedFds_.end())
     {
-        epoll_event ev;
-        ev.events = 0;
-        ev.data.ptr = channel;
-        if (type == Channel::kReadable || type == Channel::kBoth)
+        if (type != Type::kNone)
         {
-            ev.events |= EPOLLIN;
-        }
-        if (type == Channel::kWriteable || type == Channel::kBoth)
-        {
-            ev.events |= EPOLLOUT;
-        }
-        if (it == channels_.end())
-        {
+            auto ev = getEvent(fd, type);
             epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev);
-            channels_[fd] = channel;
+            attachedFds_[fd] = type;
+        }
+    }
+    else if (it->second != type)
+    {
+        if (type != Type::kNone)
+        {
+            auto ev = getEvent(fd, type);
+            epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
+            it->second = type;
         }
         else
-            epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
-    }
-    else if (it != channels_.end())
-    {
-        epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
-        channels_.erase(it);
+        {
+            epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
+            attachedFds_.erase(it);
+        }
     }
 }
+
+epoll_event Epoller::getEvent(int fd, Type type)
+{
+    epoll_event ev;
+    ev.events = 0;
+    ev.data.fd = fd;
+    if (type == Type::kReadable || type == Type::kBoth)
+    {
+        ev.events |= EPOLLIN;
+    }
+    if (type == Type::kWriteable || type == Type::kBoth)
+    {
+        ev.events |= EPOLLOUT;
+    }
+    return ev;
+}
+
 } // namespace tcp

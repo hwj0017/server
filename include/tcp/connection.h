@@ -1,16 +1,20 @@
 #pragma once
-#include "tcp/baseobject.h"
 #include "tcp/inetaddress.h"
-#include "tcp/tempptr.h"
+#include <any>
 #include <cstddef>
 #include <functional>
 #include <memory>
+
 namespace tcp
 {
-class Connection : public BaseObject<Connection>
+class TaskRunner;
+class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
-    using MessageTask = std::function<void(const TempPtr<Connection>&, const void*, std::size_t)>;
+    using Task = std::function<void(Connection*)>;
+    using StartTask = std::function<void(Connection*)>;
+    using StopTask = std::function<void(Connection*)>;
+    using MessageTask = std::function<void(Connection*, const void*, std::size_t)>;
     struct Tasks
     {
         StartTask startTask;
@@ -18,13 +22,21 @@ class Connection : public BaseObject<Connection>
         MessageTask messageTask;
     };
     // 由server实例化
-    explicit Connection(int clientfd, IoContext* ioContext, std::size_t id, const InetAddress& peerAddr,
-                        const Tasks& tasks, const ReleaseTask& releaseTask);
+    explicit Connection(int clientfd, TaskRunner* taskRunner, const InetAddress& peerAddr, const Tasks& tasks);
     ~Connection();
-    // 需要考虑线程安全问题
+    // 线程安全
+    void start();
+    void stop();
     void send(const std::string& data);
     void send(std::string&& data);
     void send(const void* data, std::size_t len);
+    void doTask(const Task& task, double deley = 0.0, double interval = 0.0);
+    void setContext(std::any context);
+    std::any& getContext();
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace tcp
