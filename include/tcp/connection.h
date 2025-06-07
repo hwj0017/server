@@ -4,14 +4,15 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <string_view>
 
 namespace tcp
 {
-class TaskRunner;
+class Channel;
 class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
-    using Task = std::function<void(Connection*)>;
+    using Task = std::function<void()>;
     using StartTask = std::function<void(Connection*)>;
     using StopTask = std::function<void(Connection*)>;
     using MessageTask = std::function<void(Connection*, const void*, std::size_t)>;
@@ -22,15 +23,15 @@ class Connection : public std::enable_shared_from_this<Connection>
         MessageTask messageTask;
     };
     // 由server实例化
-    explicit Connection(int clientfd, TaskRunner* taskRunner, const InetAddress& peerAddr, const Tasks& tasks);
+    explicit Connection(int clientfd, Channel*, const InetAddress& peerAddr, const Tasks& tasks);
     ~Connection();
     // 线程安全
     void start();
     void stop();
-    void send(const std::string& data);
+    void send(std::string_view data);
     void send(std::string&& data);
-    void send(const void* data, std::size_t len);
-    void doTask(const Task& task, double deley = 0.0, double interval = 0.0);
+
+    void doTask(Task&& task, double deley = 0.0, double interval = 0.0);
     void setContext(std::any context);
     std::any& getContext();
 

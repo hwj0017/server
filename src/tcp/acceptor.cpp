@@ -1,4 +1,5 @@
 #include "tcp/acceptor.h"
+#include "channel.h"
 #include "socket.h"
 #include "taskrunner.h"
 #include "tcp/inetaddress.h"
@@ -8,39 +9,34 @@ namespace tcp
 {
 struct Acceptor::Impl
 {
-    Impl(int fd, TaskRunner* taskrunner, const InetAddress& listenAddr, const Tasks& tasks)
-        : fd_(fd), taskRunner_(taskrunner), listenAddr_(listenAddr), tasks_(tasks)
+    Impl(int fd, Channel* channel, const InetAddress& listenAddr, const Tasks& tasks)
+        : fd_(fd), channel_(channel), listenAddr_(listenAddr), tasks_(tasks)
     {
     }
     int fd_;
-    TaskRunner* taskRunner_;
+    Channel* channel_;
     InetAddress listenAddr_;
     Tasks tasks_;
 };
-Acceptor::Acceptor(TaskRunner* taskRunner, const InetAddress& listenAddr, const Tasks& tasks)
+Acceptor::Acceptor(Channel* channel, const InetAddress& listenAddr, const Tasks& tasks)
 {
-
-    impl_ = std::make_unique<Impl>(socket::createAcceptorSocket(listenAddr), taskRunner, listenAddr, tasks);
+    impl_ = std::make_unique<Impl>(socket::createAcceptorSocket(listenAddr), channel, listenAddr, tasks);
+    channel->setReadTask([acceptor = shared_from_this(), this]() {
+        InetAddress clientAddr;
+        int clientFd = socket::accept(impl_->fd_, &clientAddr);
+        acceptor->impl_->tasks_.acceptTask(this, clientFd, clientAddr);
+        Logger::logger << std::string("accepted a client from ") << clientAddr.toIpPort();
+    });
 }
 
 void Acceptor::start()
 {
-    impl_->taskRunner_->runTask([acceptor = shared_from_this()]() mutable {
-        // 读事件
-        auto readTask = [](Acceptor* acceptor) {
-            InetAddress clientAddr;
-            int clientFd = socket::accept(acceptor->impl_->fd_, &clientAddr);
-            acceptor->impl_->tasks_.acceptTask(acceptor, clientFd, clientAddr);
-            Logger::logger << std::string("accepted a client from ") << clientAddr.toIpPort();
-        };
-        acceptor->impl_->taskRunner_->addIoTask<Acceptor>(acceptor->impl_->fd_, std::move(acceptor),
-                                                          std::move(readTask));
-    });
+    impl_->channel_->enableRead();
 }
 
 void Acceptor::stop()
 {
-    impl_->taskRunner_->removeIoTask(impl_->fd_);
+    impl_->channel_->disableAll();
 }
 Acceptor::~Acceptor() = default;
 

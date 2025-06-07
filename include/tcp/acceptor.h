@@ -6,11 +6,11 @@
 #include <memory>
 namespace tcp
 {
-class TaskRunner;
+class Channel;
 class Acceptor : public std::enable_shared_from_this<Acceptor>
 {
   public:
-    using Task = std::function<void(Acceptor*)>;
+    using Task = std::function<void()>;
     using StartTask = std::function<void(Acceptor*)>;
     using StopTask = std::function<void(Acceptor*)>;
     using AcceptTask = std::function<void(Acceptor* acceptor, int clientfd, const InetAddress& peerAddr)>;
@@ -21,7 +21,7 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
         StopTask stopTask;
         AcceptTask acceptTask;
     };
-    explicit Acceptor(TaskRunner* taskRunner, const InetAddress& listenAddr, const Tasks& tasks);
+    explicit Acceptor(Channel* taskRunner, const InetAddress& listenAddr, const Tasks& tasks);
     ~Acceptor();
     void start();
     void stop();

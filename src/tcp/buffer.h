@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <vector>
 namespace tcp
 {
@@ -59,8 +60,7 @@ class Buffer
     }
     // 返回读写的字节数，为-1则表示出错
     int readSocket(int fd);
-    int writeSocket(int fd, const std::string& data);
-    int writeSocket(int fd, const void* data = nullptr, size_t len = 0);
+    int writeSocket(int fd, std::string_view data = std::string_view());
 
   private:
     // 确保有足够的后写空间
