@@ -1,37 +1,25 @@
 #pragma once
 #include "tcp/inetaddress.h"
-#include <any>
+#include "utils/task.h"
 #include <cstddef>
-#include <functional>
 #include <memory>
+#include <string_view>
 
 namespace tcp
 {
-class TaskRunner;
-class Connector : public std::enable_shared_from_this<Connector>
+class IoContext;
+class Socket;
+class Connector
 {
   public:
-    using Task = std::function<void(Connector*)>;
-    using StartTask = std::function<void(Connector*)>;
-    using StopTask = std::function<void(Connector*)>;
-    using MessageTask = std::function<void(Connector*, const void*, std::size_t)>;
-
-    struct Tasks
-    {
-        StartTask startTask;
-        StopTask stopTask;
-        MessageTask messageTask;
-    };
-    explicit Connector(TaskRunner* taskRunner, const InetAddress& serverAddr, const Tasks& tasks);
+    Connector() = default;
+    Connector(const InetAddress& server_address, IoContext* io_context);
+    Connector(const Connector&) = delete;
+    Connector(Connector&&) = default;
+    auto operator=(Connector&&) -> Connector& = default;
     ~Connector();
-    void start();
-    void stop();
-    void send(const void* data, std::size_t size);
-    void send(const std::string& data);
-    void send(std::string&& data);
-    void doTask(const Task& task, double deley = 0.0, double interval = 0.0);
-    void setContext(std::any context);
-    std::any& getContext();
+    auto async_read() -> utils::Task<std::string>;
+    auto async_send(std::string_view data) -> utils::Task<size_t>;
 
   private:
     struct Impl;

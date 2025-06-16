@@ -1,101 +1,44 @@
 #pragma once
 
 #include "tcp/inetaddress.h"
-#include "utils/log.h"
-#include <cassert>
 #include <cstddef>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <string>
+#include <string_view>
+#include <vector>
+
 namespace tcp
 {
-namespace socket
+class IoContext;
+class Channel;
+class Socket
 {
-
-// 用于服务端监听连接
-inline auto listen(int acceptorFd, int backlog)
-{
-    assert(::listen(acceptorFd, SOMAXCONN) >= 0);
-}
-inline auto accept(int listenFd, InetAddress* clientAddr)
-{
-    Logger::logger << std::string("accepting a client");
-    int clientFd = ::accept(listenFd, (sockaddr*)&clientAddr->addr_, &clientAddr->addrLen_);
-    fcntl(clientFd, F_SETFL, fcntl(clientFd, F_GETFL) | O_NONBLOCK);
-    assert(clientFd >= 0);
-    return clientFd;
-}
-// 用于客户端连接服务端
-
-inline auto createAcceptorSocket(const InetAddress& addr)
-{
-    auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    assert(fd >= 0);
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    assert(::bind(fd, (sockaddr*)&addr.addr_, addr.addrLen_) >= 0);
-    assert(::listen(fd, SOMAXCONN) >= 0);
-    return fd;
-}
-inline auto createConnectorSocket(const InetAddress& addr)
-{
-    auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    assert(fd >= 0);
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    assert(::connect(fd, (sockaddr*)&addr.addr_, addr.addrLen_) >= 0 || errno == EINPROGRESS);
-    return fd;
-}
-
-inline auto createClientSocket(const InetAddress& serverAddr)
-{
-    auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    assert(fd >= 0);
-    assert(::connect(fd, (sockaddr*)&serverAddr.addr_, serverAddr.addrLen_) >= 0 || errno == EINPROGRESS);
-    return fd;
-}
-// 返回读字节数，无数据返回0，断开连接返回-1
-inline int readNoBlocking(int fd, void* buf, size_t len)
-{
-    auto readNum = ::read(fd, buf, len);
-    if (readNum <= 0)
+  public:
+    enum class Type
     {
-        if ((readNum == -1) && (errno == EAGAIN || errno == EWOULDBLOCK))
-        {
-            std::cout << "readNoBlocking: no data" << std::endl;
-            return 0;
-        }
-        else
-        {
-            std::cout << "readNoBlocking: error" << std::endl;
-            return -1;
-        }
-    }
-    return readNum;
-}
+        Acceptor,
+        Connection,
+        Connector,
+    };
+    Socket();
+    Socket(const Socket&) = delete;
+    Socket(Socket&&);
+    auto operator=(const Socket&) -> Socket& = delete;
+    auto operator=(Socket&&) -> Socket&;
+    ~Socket();
+    auto fd() const -> int { return fd_; }
 
-inline int writeNoBlocking(int fd, const void* buf, size_t len)
-{
-    auto writeNum = ::write(fd, buf, len);
-    if (writeNum <= 0)
-    {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-        {
-            return 0;
-        }
-        else
-            return -1;
-    }
-    return writeNum;
-}
+    auto accept() -> std::pair<Socket, bool>;
+    auto recv() -> std::pair<std::string, bool>;
+    auto send(std::string_view data) -> std::pair<size_t, bool>;
+    static auto createAcceptorSocket(const InetAddress& listen_address) -> Socket;
+    static auto createConnecionSocket(int fd, const InetAddress& client_address) -> Socket;
+    static auto createConnectorSocket(const InetAddress& server_address) -> Socket;
 
-inline auto readBlocking(int fd, void* buf, size_t len)
-{
-    return ::read(fd, buf, len);
-}
-
-inline auto writeBlocking(int fd, const void* buf, size_t len)
-{
-    return ::write(fd, buf, len);
-}
-} // namespace socket
+  private:
+    Socket(int fd, const InetAddress& address);
+    static constexpr size_t kRecvBufferSize = 4096;
+    int fd_;
+    InetAddress address_;
+};
 
 } // namespace tcp

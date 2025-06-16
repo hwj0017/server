@@ -1,109 +1,66 @@
 #include "epoller.h"
-#include "channel.h"
 #include <cassert>
+#include <iostream>
+#include <stdexcept>
 #include <sys/epoll.h>
 #include <unistd.h>
-#include <vector>
 namespace tcp
 {
-Epoller::Epoller() : epfd_(epoll_create1(EPOLL_CLOEXEC))
-{
-    assert(epfd_ >= 0);
-}
 
+Epoller::Epoller() : epollfd_(::epoll_create(1024))
+{
+
+    if (epollfd_ == -1)
+    {
+        throw std::runtime_error("Failed to create epoll file descriptor");
+    }
+}
 Epoller::~Epoller()
 {
-    assert(epfd_ >= 0);
-    close(epfd_);
-}
-
-auto Epoller::poll(int timeout) -> std::vector<Channel*>
-{
-    auto eventsNum = epoll_wait(epfd_, events_, kEventSize, timeout);
-    assert(eventsNum >= 0);
-    std::vector<Channel*> expired_channels(eventsNum);
-
-    for (auto i = 0; i < eventsNum; ++i)
+    if (epollfd_ != -1)
     {
-        auto event = events_[i].events;
-        auto channel = static_cast<Channel*>(events_[i].data.ptr);
-        if (event & EPOLLIN && event & EPOLLOUT)
-        {
-            channel->setExpiredType(Channel::Type::kBoth);
-        }
-        else if (event & EPOLLIN)
-        {
-            channel->setExpiredType(Channel::Type::kRead);
-        }
-        else
-        {
-            channel->setExpiredType(Channel::Type::kWrite);
-        }
-        expired_channels[i] = channel;
+        ::close(epollfd_);
     }
-    return expired_channels;
 }
+
+void Epoller::add(Channel* channel)
+{
+    epoll_event event;
+    event.data.ptr = channel;
+    event.events = EPOLLET;
+    event.events |= getEpollEvents(channel->type); // Set events based on the type
+    ::epoll_ctl(epollfd_, EPOLL_CTL_ADD, channel->fd, &event);
+}
+
+void Epoller::remove(Channel* channel) { ::epoll_ctl(epollfd_, EPOLL_CTL_DEL, channel->fd, nullptr); }
 
 void Epoller::update(Channel* channel)
 {
-    assert(channel != nullptr);
-    auto fd = channel->fd();
-    assert(fd >= 0);
-    auto type = channel->type();
-    if (channel->isStop())
+    epoll_event event;
+    event.data.ptr = channel;
+    event.events = EPOLLET;
+    event.events |= getEpollEvents(channel->type); // Set events based on the type
+    if (::epoll_ctl(epollfd_, EPOLL_CTL_MOD, channel->fd, &event) == -1)
     {
-        epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
-    }
-    else
-        switch (type)
-        {
-        case Channel::Type::kNone:
-            epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
-            break;
-        case Channel::Type::kRead:
-            epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
-            break;
-        case Channel::Type::kWrite:
-            epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
-            break;
-        }
-    if (type != Type::kNone)
-    {
-        auto ev = getEvent(fd, type);
-        epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev);
-        attachedFds_[fd] = type;
-    }
-
-    else if (it->second != type)
-    {
-        if (type != Type::kNone)
-        {
-            auto ev = getEvent(fd, type);
-            epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev);
-            it->second = type;
-        }
-        else
-        {
-
-            attachedFds_.erase(it);
-        }
+        throw std::runtime_error("Failed to update epoll file descriptor");
     }
 }
 
-epoll_event Epoller::getEvent(int fd, Type type)
+auto Epoller::poll() -> std::vector<Channel*>
 {
-    epoll_event ev;
-    ev.events = 0;
-    ev.data.fd = fd;
-    if (type == Type::kReadable || type == Type::kBoth)
+    int event_count = ::epoll_wait(epollfd_, events_, kMaxEventNum_, -1);
+    std::vector<Channel*> active_channels(event_count);
+    for (int i = 0; i < event_count; ++i)
     {
-        ev.events |= EPOLLIN;
+        std::cout << "1" << std::endl;
+        Channel* channel = static_cast<Channel*>(events_[i].data.ptr);
+        if (channel)
+        {
+            channel->expired_type = getTypeFromEpollEvents(events_[i].events); // set expired type
+            active_channels[i] = channel;
+        }
     }
-    if (type == Type::kWriteable || type == Type::kBoth)
-    {
-        ev.events |= EPOLLOUT;
-    }
-    return ev;
+    return active_channels;
 }
 
 } // namespace tcp

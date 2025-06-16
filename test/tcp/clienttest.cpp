@@ -18,7 +18,7 @@ int main()
     struct sockaddr_in saddr;
     memset(&saddr, 0, sizeof(saddr));
     saddr.sin_family = AF_INET;
-    saddr.sin_port = htons(8888);
+    saddr.sin_port = htons(8080);
     saddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     int res = connect(sockfd, (struct sockaddr*)&saddr, sizeof(saddr));
     assert(res != -1);

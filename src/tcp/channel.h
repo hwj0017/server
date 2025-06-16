@@ -1,50 +1,43 @@
 #pragma once
-
 #include <functional>
+#include <sys/types.h>
+
 namespace tcp
 {
-
-class Channel
+struct Channel
 {
-  public:
-    using Task = std::function<void()>;
-    enum class Type
+    using CallBack = std::function<void()>;
+    enum class Type : u_int8_t
     {
-        kNone,
-        kRead,
-        kWrite,
-        kBoth,
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Both = 3
     };
-    Channel();
-    ~Channel();
-    void start();
-    void stop();
-    auto fd() -> int;
-    void setFd(int fd);
-    auto type() -> Type;
+    Channel(int fd) : fd(fd) {}
+    int fd;
+    Type type = Type::None;
+    Type expired_type = Type::None;
+    CallBack read_callBack;
+    CallBack write_callBack;
     void enableRead();
     void enableWrite();
     void disableRead();
     void disableWrite();
     void disableAll();
-    bool inThread();
-    void setReadTask(Task&& task);
-    void setWriteTask(Task&& task);
-    void onEvent();
-    void setExpiredType(Type type);
-    void setType(Type type);
-    auto isStop() -> bool;
-    void runTask(Task&& task, double delay = 0.0, double interval = 0.0);
-    // FIFO
-    void addTask(Task&& task);
-
-  private:
-    int fd_;
-    Task read_task_;
-    Task write_task_;
-    Type type_;
-    Type expired_type_;
-    bool isStop_;
 };
+inline auto operator|(Channel::Type lhs, Channel::Type rhs) -> Channel::Type
+{
+    return static_cast<Channel::Type>(static_cast<u_int8_t>(lhs) | static_cast<u_int8_t>(rhs));
+}
 
+inline auto operator&(Channel::Type lhs, Channel::Type rhs) -> Channel::Type
+{
+    return static_cast<Channel::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs));
+}
+
+inline bool operator&&(Channel::Type lhs, Channel::Type rhs)
+{
+    return static_cast<Channel::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs)) != Channel::Type::None;
+}
 } // namespace tcp

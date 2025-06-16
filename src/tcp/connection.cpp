@@ -1,148 +1,186 @@
 #include "tcp/connection.h"
-#include "buffer.h"
-#include "channel.h"
-#include "taskrunner.h"
-#include "tcp/inetaddress.h"
-#include <cassert>
-#include <cerrno>
+#include "iocontext.h"
+#include "socket.h"
+#include "utils/task.h"
+#include <coroutine>
 #include <cstddef>
-#include <fcntl.h>
 #include <memory>
+#include <queue>
 #include <string>
-#include <string_view>
-#include <sys/types.h>
 #include <unistd.h>
+#include <vector>
 namespace tcp
 {
 struct Connection::Impl
 {
-    int fd_;
-    Channel* channel_;
-    Tasks tasks_;
-    InetAddress peerAddr_;
-    Buffer readBuffer_;
-    Buffer writeBuffer_;
-    std::any context_;
-    Impl(int fd, Channel* channel, const InetAddress& peerAddr, const Tasks& tasks)
-        : fd_(fd), channel_(channel), tasks_(tasks), peerAddr_(peerAddr)
+    enum class State
     {
-    }
-    ~Impl()
-    {
-        ::close(fd_);
-    }
+        Started,
+        Stopped
+    };
+    Socket socket;
+    IoContext* io_context;
+    std::queue<std::tuple<std::string, size_t>> recv_buffer;
+    std::queue<std::tuple<std::string, size_t>> send_buffer;
+    // save pointer
+    std::queue<utils::Awaitable<RecvResult>*> recv_waiters;
+    std::queue<utils::Awaitable<SendResult>*> send_waiters;
+    State state = State::Stopped;
+    Channel* channel = nullptr; // save pointer
+    Impl(Socket&& socket, IoContext* io_context) : socket(std::move(socket)), io_context(io_context) {}
+    ~Impl() = default;
+    auto start(std::shared_ptr<Connection> self) -> utils::Task<>;
+    auto stop() -> utils::Task<>;
+    auto async_recv() -> utils::Task<RecvResult>;
+    auto async_send(std::string_view data) -> utils::Task<SendResult>;
+    // 重置读缓存区
+    auto reset_recv() -> utils::Task<>;
+    // 重置写缓存区
+    auto reset_send() -> utils::Task<>;
+    void recv();
+    void send();
 };
-Connection::Connection(int clientfd, Channel* channel, const InetAddress& peerAddr, const Tasks& tasks)
+Connection::Connection(Socket&& socket, IoContext* io_context)
+    : impl_(std::make_unique<Impl>(std::move(socket), io_context))
 {
-    impl_ = std::make_unique<Impl>(clientfd, channel, peerAddr, tasks);
-    auto read_task = [this]() {
-        if (impl_->readBuffer_.readSocket(impl_->fd_) >= 0)
+}
+auto Connection::start() -> utils::Task<> { co_await impl_->start(shared_from_this()); }
+
+auto Connection::stop() -> utils::Task<> { co_await impl_->stop(); }
+
+auto Connection::async_recv() -> utils::Task<RecvResult> { co_return co_await impl_->async_recv(); }
+auto Connection::async_send(std::string_view data) -> utils::Task<SendResult>
+{
+    co_return co_await impl_->async_send(data);
+}
+
+auto Connection::reset_recv() -> utils::Task<> { co_await impl_->reset_recv(); }
+auto Connection::reset_send() -> utils::Task<> { co_await impl_->reset_send(); }
+
+auto Connection::Impl::start(std::shared_ptr<Connection> self) -> utils::Task<>
+{
+    co_await io_context->inThread();
+    if (state == State::Stopped)
+    {
+        state = State::Started;
+        auto channel = std::make_unique<Channel>(socket.fd());
+        channel->type = Channel::Type::Read;
+        channel->read_callBack = [self = std::move(self), this]() { recv(); };
+        channel->write_callBack = [this]() { send(); };
+        io_context->add(std::move(channel));
+    }
+}
+auto Connection::Impl::stop() -> utils::Task<>
+{
+    co_await io_context->inThread();
+    if (state == State::Started)
+    {
+        state = State::Stopped;
+        io_context->remove(socket.fd());
+    }
+}
+auto Connection::Impl::async_recv() -> utils::Task<RecvResult>
+{
+    co_await io_context->inThread();
+    if (!recv_buffer.empty())
+    {
+        auto data = std::move(std::get<0>(recv_buffer.front()));
+        recv_buffer.pop();
+        co_return {true, data};
+    }
+    utils::Awaitable<RecvResult> waiter;
+    recv_waiters.push(&waiter);
+    co_return co_await waiter;
+}
+
+auto Connection::Impl::async_send(std::string_view data) -> utils::Task<SendResult>
+{
+    co_await io_context->inThread();
+    if (send_buffer.empty())
+    {
+        auto res = socket.send(data);
+        // right or send conplete
+        if (!res.second || res.first == data.size())
         {
-            auto& task = impl_->tasks_.messageTask;
-            if (task)
-                task(this, impl_->readBuffer_.begin(), impl_->readBuffer_.size());
-            impl_->readBuffer_.clear();
+            co_return {res.first, res.second};
+        }
+        // send not complete
+        data.remove_prefix(res.first);
+        utils::Awaitable<SendResult> waiter;
+        send_buffer.push({std::string(data), 0});
+        send_waiters.push(&waiter);
+        start_send();
+        co_return co_await waiter;
+    }
+    utils::Awaitable<SendResult> waiter;
+    send_buffer.push({std::string(data), 0});
+    send_waiters.push(&waiter);
+    co_return co_await waiter;
+}
+auto Connection::Impl::reset_recv() -> utils::Task<>
+{
+    co_await io_context->inThread();
+    recv_buffer = {};
+}
+
+auto Connection::Impl::reset_send() -> utils::Task<>
+{
+    co_await io_context->inThread();
+    send_buffer = {};
+}
+
+auto Connection::Impl::start_recv() -> utils::Task<>
+{
+    // co_await io_context->inThread();
+    while (state == State::Started)
+    {
+        co_await io_context->in(socket.fd());
+        auto res = socket.recv();
+        if (!res.second)
+        {
+            stop();
+            break;
+        }
+        // recv right
+        if (recv_waiters.empty())
+        {
+            recv_buffer.push({std::move(res.first), 0});
         }
         else
         {
-            stop();
+            auto& waiter = recv_waiters.front();
+            waiter->result = {true, std::move(res.first)};
+            waiter->task.resume();
+            recv_waiters.pop();
         }
-    };
-    auto write_task = [this]() {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_) >= 0)
+    }
+}
+
+auto Connection::Impl::start_send() -> utils::Task<>
+{
+    // co_await io_context->inThread();
+    while (state == State::Started && !send_buffer.empty())
+    {
+        co_await io_context->out(socket.fd());
+        while (true)
         {
-            if (impl_->writeBuffer_.size() == 0)
+            auto& [data, offset] = send_buffer.front();
+            std::string_view data_view(data);
+            data_view.remove_prefix(offset);
+            auto res = socket.send(data_view);
+            if (!res.second)
             {
-                // 缓冲区没有数据，停止监听写事件
-                impl_->channel_->setType(Channel::Type::kRead);
-            };
-        }
-        else
-        {
-            stop();
-        }
-    };
-    impl_->channel_->setReadTask([connection = shared_from_this(), task = std::move(read_task)]() { task(); });
-    // 不需要再保留this
-    impl_->channel_->setWriteTask(std::move(write_task));
-}
-
-Connection::~Connection() = default;
-
-void Connection::start()
-{
-    impl_->channel_->enableRead();
-}
-// 发送数据
-void Connection::send(std::string_view data)
-{
-    auto send_task = [this](std::string_view data) {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_, data) >= 0)
-        {
-            if (impl_->writeBuffer_.size() > 0)
+                stop();
+                break;
+            }
+            // send right
+            if (res.first < data.size())
             {
-                // 缓冲区有数据，开始监听写事件
-                impl_->channel_->enableWrite();
-            };
+                offset += res.first;
+                break;
+            }
+            send_buffer.pop();
         }
-        else
-        {
-            stop();
-        }
-    };
-    if (impl_->channel_->inThread())
-    {
-        send_task(data);
     }
-    else
-    {
-        impl_->channel_->addTask(
-            [connection = shared_from_this(), task = std::move(send_task), data = std::string(data)]() { task(data); });
-    }
-}
-
-void Connection::send(std::string&& data)
-{
-    auto send_task = [this](std::string_view data) {
-        if (impl_->writeBuffer_.writeSocket(impl_->fd_, data) >= 0)
-        {
-            if (impl_->writeBuffer_.size() > 0)
-            {
-                // 缓冲区有数据，开始监听写事件
-                impl_->channel_->enableWrite();
-            };
-        }
-        else
-        {
-            stop();
-        }
-    };
-    if (impl_->channel_->inThread())
-    {
-        send_task(data);
-    }
-    else
-    {
-        impl_->channel_->addTask(
-            [connection = shared_from_this(), task = std::move(send_task), data = std::string(data)]() { task(data); });
-    }
-}
-
-void Connection::stop()
-{
-    impl_->channel_->disableAll();
-}
-
-void Connection::doTask(Task&& task, double deley, double interval)
-{
-    impl_->channel_->runTask(std::move(task), deley, interval);
-}
-void Connection::setContext(std::any context)
-{
-    impl_->context_ = std::move(context);
-}
-std::any& Connection::getContext()
-{
-    return impl_->context_;
 }
 } // namespace tcp

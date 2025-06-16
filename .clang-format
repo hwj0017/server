@@ -1,4 +1,4 @@
 BasedOnStyle: Microsoft
 PointerAlignment: Left
 ReferenceAlignment: Left
-
+AllowShortFunctionsOnASingleLine: All

@@ -1,89 +1,69 @@
 #include "iocontext.h"
 #include "channel.h"
-#include "epoller.h"
-#include "poller.h"
-#include "utils/log.h"
+#include "utils/task.h"
+#include "waker.h"
 #include <cassert>
-#include <cstdint>
-#include <string>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
+#include <coroutine>
+#include <memory>
 #include <unistd.h>
-#include <vector>
 namespace tcp
 {
-IoContext::IoContext() : poller_(new Epoller()), waker(this), tasks_(), state_(State::kStopped), handleState_(Waiting)
+IoContext::IoContext() : waker_(this) { waker_.start(); }
+void IoContext::run()
 {
-}
-IoContext::~IoContext() = default;
-void IoContext::start()
-{
-    state_ = State::kStarted;
-    threadId_ = std::this_thread::get_id();
-    // 循环执行
-    while (state_ != State::kStopped)
+    while (true)
     {
-        // 创建临时任务队列
-        std::vector<std::function<void()>> tempTasks;
-        tempTasks.reserve(kInitialTaskLength);
-        // 等待事件
-        handleState_ = Waiting;
-        auto activeChannels = poller_->poll(-1);
-        Logger::logger << ("activeIoObjects size: " + std::to_string(activeChannels.size()));
-        // 处理时间
-        handleState_ = HandlingEvents;
-        for (auto channel : activeChannels)
+        auto channels = epoller_.poll();
+        for (auto channel : channels)
         {
-            Logger::logger << ("activeIoObject: " + std::to_string(channel->fd()));
-            channel->onEvent();
+            handleEvent(channel);
         }
+    }
+}
+void IoContext::add(std::unique_ptr<Channel> channel)
+{
+    auto it = channels_.find(channel->fd);
+    assert(it == channels_.end());
+    epoller_.add(channel.get());
+    channels_.emplace(channel->fd, std::move(channel));
+}
+void IoContext::remove(int fd)
+{
+    auto it = channels_.find(fd);
+    if (it != channels_.end())
+    {
+        epoller_.remove(it->second.get());
+        channels_.erase(it);
+    }
+}
 
-        // 处理任务队列
-        handleState_ = CallingTasks;
+void IoContext::handleEvent(Channel* channel)
+{
+    if (channel->expired_type && Epoller::Type::Read)
+    {
+        if (channel->read_callBack)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            tempTasks.swap(tasks_);
+            channel->read_callBack();
         }
-        for (auto& task : tempTasks)
+    }
+    if (channel->expired_type && Epoller::Type::Write)
+    {
+        channel->type = channel->type & Epoller::Type::Read; // Reset to read type only
+        if (channel->write_callBack)
         {
-            task();
+            channel->write_callBack();
         }
     }
 }
 
-void IoContext::stop()
+auto IoContext::inThread() -> utils::Task<>
 {
-    state_ = State::kStopped;
-    waker.wakeup();
+    if (waker_.isInThread())
+    {
+        co_return;
+    }
+    auto self_task = co_await utils::SelfTask();
+    waker_.addTask(std::move(self_task));
+    co_await std::suspend_always{};
 }
-bool IoContext::inOwnThread() const
-{
-    return threadId_ == std::this_thread::get_id();
-}
-
-void IoContext::updateChannel(Channel* channel)
-{
-    poller_->update(channel);
-}
-
-// waker初始化就启动
-IoContext::Waker::Waker(IoContext* ioContext)
-    : fd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)), channel_(fd_), ioContext_(ioContext)
-{
-    assert(fd_ >= 0);
-    channel_.setType(Channel::kReadable);
-    channel_.setReadTask([this] {
-        uint64_t count;
-        int n = ::read(fd_, reinterpret_cast<char*>(&count), sizeof(count));
-        assert(n == sizeof(count));
-    });
-    ioContext_->updateChannel(&channel_);
-}
-void IoContext::Waker::wakeup()
-{
-    uint64_t count = 1;
-    int n = ::write(fd_, reinterpret_cast<char*>(&count), sizeof(count));
-    assert(n == sizeof(count));
-}
-
 } // namespace tcp

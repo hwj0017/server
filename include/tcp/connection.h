@@ -1,6 +1,8 @@
 #pragma once
 #include "tcp/inetaddress.h"
+#include "utils/task.h"
 #include <any>
+#include <coroutine>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -8,32 +10,26 @@
 
 namespace tcp
 {
-class Channel;
+class IoContext;
+class Socket;
 class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
-    using Task = std::function<void()>;
-    using StartTask = std::function<void(Connection*)>;
-    using StopTask = std::function<void(Connection*)>;
-    using MessageTask = std::function<void(Connection*, const void*, std::size_t)>;
-    struct Tasks
-    {
-        StartTask startTask;
-        StopTask stopTask;
-        MessageTask messageTask;
-    };
-    // 由server实例化
-    explicit Connection(int clientfd, Channel*, const InetAddress& peerAddr, const Tasks& tasks);
+    using RecvResult = std::pair<bool, std::string>;
+    using SendResult = std::pair<bool, size_t>;
+    Connection() = default;
+    Connection(Socket&& socket, IoContext* io_context);
+    Connection(const Connection&) = delete;
+    Connection(Connection&&) noexcept = default;
+    auto operator=(Connection&&) noexcept -> Connection& = default;
     ~Connection();
-    // 线程安全
-    void start();
-    void stop();
-    void send(std::string_view data);
-    void send(std::string&& data);
+    auto start() -> utils::Task<>;
+    auto stop() -> utils::Task<>;
 
-    void doTask(Task&& task, double deley = 0.0, double interval = 0.0);
-    void setContext(std::any context);
-    std::any& getContext();
+    auto async_recv() -> utils::Task<RecvResult>;
+    auto async_send(std::string_view data) -> utils::Task<SendResult>;
+    auto reset_recv() -> utils::Task<>;
+    auto reset_send() -> utils::Task<>;
 
   private:
     struct Impl;
