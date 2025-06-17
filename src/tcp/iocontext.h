@@ -25,6 +25,11 @@ class IoContext
     auto inThread() -> utils::Task<>;
     auto timeout(double seconds) -> Timeout;
     void run();
+    void enableRead();
+    void enableWrite();
+    void disableRead();
+    void disableWrite();
+    void disableAll();
 
   private:
     void handleEvent(Channel* channel);

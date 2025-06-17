@@ -20,11 +20,6 @@ struct Channel
     Type expired_type = Type::None;
     CallBack read_callBack;
     CallBack write_callBack;
-    void enableRead();
-    void enableWrite();
-    void disableRead();
-    void disableWrite();
-    void disableAll();
 };
 inline auto operator|(Channel::Type lhs, Channel::Type rhs) -> Channel::Type
 {
