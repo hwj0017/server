@@ -1,11 +1,11 @@
 #pragma once
-#include "tcp/inetaddress.h"
 #include "utils/task.h"
 #include <any>
 #include <coroutine>
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 namespace tcp
@@ -15,8 +15,9 @@ class Socket;
 class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
-    using RecvResult = std::pair<bool, std::string>;
-    using SendResult = std::pair<bool, size_t>;
+    using RecvResult = std::optional<std::string>;
+    using SendResult = std::optional<size_t>;
+    using TimeTask = std::function<void()>();
     Connection() = default;
     Connection(Socket&& socket, IoContext* io_context);
     Connection(const Connection&) = delete;
@@ -30,6 +31,8 @@ class Connection : public std::enable_shared_from_this<Connection>
     auto async_send(std::string_view data) -> utils::Task<SendResult>;
     auto reset_recv() -> utils::Task<>;
     auto reset_send() -> utils::Task<>;
+    auto addTimer(TimeTask, double delay, double interval) -> uint64_t;
+    void removeTimer(uint64_t timer_id);
 
   private:
     struct Impl;

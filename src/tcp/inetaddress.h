@@ -5,16 +5,17 @@
 #include <netinet/in.h>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 namespace tcp
 {
 class InetAddress
 {
   public:
-    InetAddress(const char* ip, uint16_t port)
+    InetAddress(std::string_view ip, uint16_t port)
     {
         addr_.sin_family = AF_INET;
         addr_.sin_port = htons(port);
-        if (inet_pton(AF_INET, ip, &addr_.sin_addr) <= 0)
+        if (inet_pton(AF_INET, ip.data(), &addr_.sin_addr) <= 0)
         {
             throw std::runtime_error("Invalid IP address");
         }

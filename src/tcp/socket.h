@@ -1,7 +1,8 @@
 #pragma once
 
-#include "tcp/inetaddress.h"
+#include "inetaddress.h"
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -9,10 +10,12 @@
 namespace tcp
 {
 class IoContext;
-class Channel;
 class Socket
 {
   public:
+    using AcceptResult = std::optional<Socket>;
+    using RecvResult = std::optional<std::string>;
+    using SendResult = std::optional<size_t>;
     enum class Type
     {
         Acceptor,
@@ -27,9 +30,9 @@ class Socket
     ~Socket();
     auto fd() const -> int { return fd_; }
 
-    auto accept() -> std::pair<Socket, bool>;
-    auto recv() -> std::pair<std::string, bool>;
-    auto send(std::string_view data) -> std::pair<size_t, bool>;
+    auto accept() -> AcceptResult;
+    auto recv() -> RecvResult;
+    auto send(std::string_view data) -> SendResult;
     static auto createAcceptorSocket(const InetAddress& listen_address) -> Socket;
     static auto createConnecionSocket(int fd, const InetAddress& client_address) -> Socket;
     static auto createConnectorSocket(const InetAddress& server_address) -> Socket;

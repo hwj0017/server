@@ -1,17 +1,20 @@
 
 #include "tcp/acceptor.h"
 // #include "connection.h"
-#include "channel.h"
+#include "inetaddress.h"
 #include "iocontext.h"
 #include "socket.h"
 #include "tcp/connection.h"
+#include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
 #include <coroutine>
+#include <cstddef>
 #include <memory>
 #include <queue>
 namespace tcp
 {
+
 struct Acceptor::Impl
 {
     enum class State
@@ -19,27 +22,28 @@ struct Acceptor::Impl
         Started,
         Stopped
     };
+    static constexpr size_t kMaxPendingConnections = 1024;
     Socket socket;
     IoContext* io_context;
-    std::queue<Socket> accept_buffer;
-    std::queue<utils::Awaitable<AcceptResult>*> accept_waiters;
+    IoContextPool* io_context_pool;
+    utils::Channel<Socket> accept_channel{kMaxPendingConnections};
     State state = State::Stopped;
-    Channel* channel = nullptr;
-    Impl(const InetAddress& listen_address, IoContext* io_context)
-        : socket(Socket::createAcceptorSocket(listen_address)), io_context(io_context)
+    Impl(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
+        : socket(Socket::createAcceptorSocket(InetAddress(listen_ip, port))), io_context(io_context),
+          io_context_pool(io_context_pool)
     {
     }
     ~Impl() { stop(); };
     auto start(std::shared_ptr<Acceptor> self) -> utils::Task<>;
     auto stop() -> utils::Task<>;
+    auto async_accept() -> utils::Task<AcceptResult>;
     void accept();
     auto reset_accept() -> utils::Task<>;
     void handle_error();
     void update_tasks();
-    auto async_accept() -> utils::Task<AcceptResult>;
 };
-Acceptor::Acceptor(const InetAddress& listen_address, IoContext* io_context)
-    : impl_(std::make_unique<Impl>(listen_address, io_context))
+Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
+    : impl_(std::make_unique<Impl>(listen_ip, port, io_context, io_context_pool))
 {
 }
 Acceptor ::~Acceptor() = default;
@@ -53,33 +57,41 @@ auto Acceptor::reset_accept() -> utils::Task<> { co_await impl_->reset_accept();
 
 auto Acceptor::Impl::start(std::shared_ptr<Acceptor> self) -> utils::Task<>
 {
-    co_await io_context->inThread();
-    if (state == State::Stopped)
+    co_await io_context->thread_channel().pop();
+    auto io_channels = io_context->get_channels(socket.fd());
+    while (true)
     {
-        state = State::Started;
-        auto new_channel = std::make_unique<Channel>(socket.fd());
-        new_channel->type = Channel::Type::Read;
-        new_channel->read_callBack = [self = std::move(self)]() { self->impl_->accept(); };
-        channel = new_channel.get();
-        io_context->add(std::move(new_channel));
+        co_await std::get<0>(io_channels).pop();
+        auto res = socket.accept();
+        if (res.has_value())
+        {
+            accept_channel.push(std::move(res.value()));
+        }
+        else
+        {
+            accept_channel.close();
+            break;
+        }
     }
 }
 
 auto Acceptor::Impl::stop() -> utils::Task<>
 {
-    co_await io_context->inThread();
+    co_await io_context->thread_channel().pop();
     if (state == State::Started)
     {
         state = State::Stopped;
-        io_context->remove(socket.fd());
+        io_context->remove_channel(socket.fd());
     }
 }
+// 接受连接
 void Acceptor::Impl::accept()
 {
+    // 调用socket的accept函数，返回一个pair，第一个元素是连接的socket，第二个元素是bool值，表示是否成功
     auto res = socket.accept();
-    if (res.second)
+    if (res.has_value())
     {
-        accept_buffer.push(std::move(res.first));
+        accept_buffer.push(std::move(res.value()));
         update_tasks();
     }
     else

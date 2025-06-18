@@ -15,7 +15,7 @@ template <typename T> struct promise_type;
 struct TaskBase
 {
     TaskBase() noexcept : handle_(nullptr), promise_base_(nullptr) {}
-    TaskBase(coroutine_handle<> handle, promise_type_base* promise_base);
+    template <typename T> TaskBase(coroutine_handle<promise_type<T>> handle);
     TaskBase(const TaskBase&&) = delete;
     TaskBase& operator=(const TaskBase&&) = delete;
     TaskBase(TaskBase&& other) noexcept : handle_(other.handle_), promise_base_(other.promise_base_)
@@ -29,6 +29,7 @@ struct TaskBase
     // 如果执行完，返回true;否则保存协程，返回false;
     template <typename T> bool await_suspend(coroutine_handle<promise_type<T>> waiter);
     void resume() { handle_.resume(); }
+
     operator bool() { return bool(handle_); }
     coroutine_handle<void> handle_;
     promise_type_base* promise_base_;
@@ -71,11 +72,15 @@ template <typename T = void> struct Task : TaskBase
 {
     using promise_type = utils::promise_type<T>;
     Task() : TaskBase() {}
-    Task(coroutine_handle<promise_type> handle) : TaskBase(handle, &handle.promise()) {}
+    Task(coroutine_handle<promise_type> handle) : TaskBase(handle) {}
     Task(const Task&&) = delete;
     Task& operator=(const Task&&) = delete;
-    Task(Task&& other) = delete;
-    Task& operator=(Task&&) = delete;
+    Task(Task&& other) noexcept : TaskBase(std::move(other)) {};
+    Task& operator=(Task&& other) noexcept
+    {
+        TaskBase::operator=(std::move(other));
+        return *this;
+    };
     ~Task() = default;
     auto await_resume() -> T;
 };
@@ -97,19 +102,19 @@ template <typename T = void> struct Task : TaskBase
 //     coroutine_handle<promise_type_base> handle_;
 // };
 // 用来获取自身句柄
-struct SelfTask
+template <typename T = void> struct SelfTask
 {
     bool await_ready() noexcept { return false; }
-    template <typename promise_type> bool await_suspend(coroutine_handle<promise_type> coro) noexcept
+    bool await_suspend(coroutine_handle<promise_type<T>> coro) noexcept
     {
-        task = TaskBase(coro, &coro.promise());
+        task = Task<T>(coro);
         return false;
     }
-    auto await_resume() noexcept -> TaskBase { return std::move(task); }
-    TaskBase task;
+    auto await_resume() noexcept -> Task<T> { return std::move(task); }
+    Task<T> task;
 };
-inline TaskBase::TaskBase(coroutine_handle<> handle, promise_type_base* promise_base)
-    : handle_(handle), promise_base_(promise_base)
+template <typename T>
+TaskBase::TaskBase(coroutine_handle<promise_type<T>> handle) : handle_(handle), promise_base_(&handle.promise())
 {
     ++promise_base_->count;
 }
@@ -135,6 +140,7 @@ inline auto TaskBase::operator=(TaskBase&& other) noexcept -> TaskBase&
     }
     return *this;
 }
+
 template <typename T> auto promise_type<T>::get_return_object() -> Task<T>
 {
     return Task<T>{coroutine_handle<promise_type<T>>::from_promise(*this)};

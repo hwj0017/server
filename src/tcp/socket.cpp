@@ -1,6 +1,6 @@
 #include "socket.h"
+#include "inetaddress.h"
 #include "iocontext.h"
-#include "tcp/inetaddress.h"
 #include "utils/task.h"
 #include <cstddef>
 #include <fcntl.h>
@@ -39,18 +39,18 @@ Socket::~Socket()
         ::close(fd_);
     }
 }
-auto Socket::accept() -> std::pair<Socket, bool>
+auto Socket::accept() -> AcceptResult
 {
     InetAddress address;
     auto fd = ::accept(fd_, reinterpret_cast<sockaddr*>(&address.addr_), &address.addrLen_);
     if (fd < 0)
     {
-        return {Socket(), false};
+        return {};
     }
-    return {createConnecionSocket(fd, address), true};
+    return {createConnecionSocket(fd, address)};
 }
 
-auto Socket::recv() -> std::pair<std::string, bool>
+auto Socket::recv() -> RecvResult
 {
     size_t total_bytes_received = 0;
     std::string data;
@@ -62,25 +62,25 @@ auto Socket::recv() -> std::pair<std::string, bool>
         if (bytes_received <= 0 && errno != EAGAIN && errno != EWOULDBLOCK)
         {
             data.resize(current_size);
-            return {std::move(data), false};
+            return {};
         }
         if (bytes_received < kRecvBufferSize)
         {
             data.resize(current_size + bytes_received);
-            return {std::move(data), true};
+            return {std::move(data)};
         }
     }
 }
 
-auto Socket::send(std::string_view data) -> std::pair<size_t, bool>
+auto Socket::send(std::string_view data) -> SendResult
 {
     size_t total_bytes_sent = 0;
     auto bytes_sent = ::send(fd_, data.data(), data.size(), 0);
     if (bytes_sent <= 0 && errno != EAGAIN && errno != EWOULDBLOCK)
     {
-        return {total_bytes_sent, false};
+        return {};
     }
-    return {total_bytes_sent, true};
+    return {total_bytes_sent};
 }
 
 auto Socket::createAcceptorSocket(const InetAddress& listen_address) -> Socket
