@@ -1,23 +1,27 @@
 #pragma once
-#include "channel.h"
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <vector>
 namespace tcp
 {
-class Channel;
 class Epoller
 {
   public:
-    using Type = Channel::Type;
+    enum class Type : u_int8_t
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Both = 3
+    };
     Epoller();
     Epoller(const Epoller&) = delete;
     Epoller(Epoller&&) = delete;
     ~Epoller();
-    void add(Channel* channel);
-    void remove(Channel* channel);
-    void update(Channel* Channel);
-    auto poll() -> std::vector<Channel*>;
+    void add(int fd, Type type, void* ptr);
+    void remove(int fd);
+    void update(int fd, Type type, void* ptr);
+    auto poll() -> std::vector<void*>;
 
   private:
     static u_int32_t getEpollEvents(Type type);
@@ -26,7 +30,20 @@ class Epoller
     int epollfd_;
     epoll_event events_[kMaxEventNum_];
 };
+inline auto operator|(Epoller::Type lhs, Epoller::Type rhs) -> Epoller::Type
+{
+    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) | static_cast<u_int8_t>(rhs));
+}
 
+inline auto operator&(Epoller::Type lhs, Epoller::Type rhs) -> Epoller::Type
+{
+    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs));
+}
+
+inline bool operator&&(Epoller::Type lhs, Epoller::Type rhs)
+{
+    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs)) != Epoller::Type::None;
+}
 inline u_int32_t Epoller::getEpollEvents(Type type)
 {
     u_int32_t events = EPOLLET; // Edge-triggered mode
