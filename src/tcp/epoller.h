@@ -14,14 +14,21 @@ class Epoller
         Write = 2,
         Both = 3
     };
+    struct Node
+    {
+        int fd;
+        Type type;
+        Type expired_type = Type::None;
+        Node(int fd, Type type) : fd(fd), type(type) {}
+    };
     Epoller();
     Epoller(const Epoller&) = delete;
     Epoller(Epoller&&) = delete;
     ~Epoller();
-    void add(int fd, Type type, void* ptr);
-    void remove(int fd);
-    void update(int fd, Type type, void* ptr);
-    auto poll() -> std::vector<void*>;
+    void add(Node* node);
+    void remove(Node* node);
+    void update(Node* node);
+    auto poll() -> std::vector<Node*>;
 
   private:
     static u_int32_t getEpollEvents(Type type);

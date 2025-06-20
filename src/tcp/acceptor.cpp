@@ -3,6 +3,7 @@
 // #include "connection.h"
 #include "inetaddress.h"
 #include "iocontext.h"
+#include "iocontextpool.h"
 #include "socket.h"
 #include "tcp/connection.h"
 #include "utils/channel.h"
@@ -37,10 +38,8 @@ struct Acceptor::Impl
     auto start(std::shared_ptr<Acceptor> self) -> utils::Task<>;
     auto stop() -> utils::Task<>;
     auto async_accept() -> utils::Task<AcceptResult>;
-    void accept();
     auto reset_accept() -> utils::Task<>;
-    void handle_error();
-    void update_tasks();
+    auto accept(std::shared_ptr<Acceptor> self) -> utils::Task<>;
 };
 Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
     : impl_(std::make_unique<Impl>(listen_ip, port, io_context, io_context_pool))
@@ -58,87 +57,57 @@ auto Acceptor::reset_accept() -> utils::Task<> { co_await impl_->reset_accept();
 auto Acceptor::Impl::start(std::shared_ptr<Acceptor> self) -> utils::Task<>
 {
     co_await io_context->thread_channel().pop();
-    auto io_channels = io_context->get_channels(socket.fd());
-    while (true)
-    {
-        co_await std::get<0>(io_channels).pop();
-        auto res = socket.accept();
-        if (res.has_value())
+    auto input_task = [self = std::move(self), this]() -> utils::Task<> {
+        while (state == State::Started)
         {
-            accept_channel.push(std::move(res.value()));
+            // 监听
+            co_await std::suspend_always{};
+            auto result = socket.accept();
+            if (result.has_value())
+            {
+                co_await accept_channel.push(std::move(result.value()));
+                io_context->continue_read(socket.fd());
+            }
+            else
+            {
+                // 必在当前线程,会将当前协程销毁
+                co_await stop();
+            }
         }
-        else
-        {
-            accept_channel.close();
-            break;
-        }
-    }
+    }();
+    io_context->add_io_task(socket.fd(), std::move(input_task), {});
 }
 
 auto Acceptor::Impl::stop() -> utils::Task<>
 {
-    co_await io_context->thread_channel().pop();
+    if (!io_context->in_attached_thread())
+    {
+        co_await io_context->thread_channel().pop();
+    }
     if (state == State::Started)
     {
         state = State::Stopped;
-        io_context->remove_channel(socket.fd());
-    }
-}
-// 接受连接
-void Acceptor::Impl::accept()
-{
-    // 调用socket的accept函数，返回一个pair，第一个元素是连接的socket，第二个元素是bool值，表示是否成功
-    auto res = socket.accept();
-    if (res.has_value())
-    {
-        accept_buffer.push(std::move(res.value()));
-        update_tasks();
-    }
-    else
-    {
-        handle_error();
     }
 }
 
 // 定义一个异步接受函数，返回一个AcceptResult类型的Task
 auto Acceptor::Impl::async_accept() -> utils::Task<AcceptResult>
 {
-    // 如果接受缓冲区为空
-    if (!accept_buffer.empty())
+    auto client_socket = co_await accept_channel.pop();
+    if (client_socket.has_value())
     {
-        auto socket = std::move(accept_buffer.front());
-        accept_buffer.pop();
-        co_return {true, std::move(socket)};
+        co_return {Connection(std::move(client_socket.value()), io_context_pool->getIoContext())};
     }
-    utils::Awaitable<AcceptResult> waiter;
-    accept_waiters.push(&waiter);
-    co_return co_await waiter;
+    co_return {};
 }
 
 auto Acceptor::Impl::reset_accept() -> utils::Task<>
 {
-    co_await io_context->inThread();
-    accept_buffer = {};
+    if (!io_context->in_attached_thread())
+    {
+        co_await io_context->thread_channel().pop();
+    }
+    accept_channel.clear();
 }
 
-void Acceptor::Impl::handle_error()
-{
-    while (!accept_waiters.empty())
-    {
-        auto waiter = accept_waiters.front();
-        accept_waiters.pop();
-        waiter->result = {false, Socket()};
-        waiter->task.resume();
-    }
-}
-void Acceptor::Impl::update_tasks()
-{
-    if (!accept_waiters.empty())
-    {
-        auto waiter = accept_waiters.front();
-        accept_waiters.pop();
-        waiter->result = {true, std::move(accept_buffer.front())};
-        waiter->task.resume();
-    }
-}
 } // namespace tcp

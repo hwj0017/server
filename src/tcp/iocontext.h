@@ -14,25 +14,35 @@ class IoContext
 {
   public:
     using Task = utils::Task<>;
+
     IoContext();
     ~IoContext() = default;
     // 由调用方保证在线程内
-    // void add(std::unique_ptr<Channel> channel);
-    // remove in the last
-    // void remove(int fd);
-    auto get_channels(int fd) -> std::tuple<utils::Channel<>, utils::Channel<>>;
-    void close_channels(int fd);
-    auto thread_channel() -> utils::Channel<>&;
+    void add_io_task(int fd, utils::Task<> input_task, utils::Task<> output_task);
+    void remove_io_task(int fd);
+    // auto get_output_channel(int fd) -> utils::Channel<>&;
+    // auto thread_channel() -> utils::Channel<>&;
     bool in_attached_thread();
     auto addTimer(Task, double delay, double interval) -> uint64_t;
     void remove_timer(uint64_t timer_id);
+    void continue_read(int fd);
+    void continue_write(int fd);
     void run();
 
   private:
-    void handleEvent(Channel* channel);
+    struct Node : public Epoller::Node
+    {
+        utils::Task<> input_task;
+        utils::Task<> output_task;
+        Node(int fd, Epoller::Type type, utils::Task<>&& input_task, utils::Task<>&& output_task)
+            : Epoller::Node(fd, type), input_task(std::move(input_task)), output_task(std::move(output_task))
+        {
+        }
+    };
+    void handle_node(Node* node);
     Epoller epoller_;
     Waker waker_;
-    std::unordered_map<int, std::unique_ptr<Channel>> channels_;
+    std::unordered_map<int, Node> nodes_;
 };
 
 struct InThread

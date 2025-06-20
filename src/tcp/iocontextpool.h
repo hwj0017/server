@@ -3,13 +3,14 @@
 #include "tcp/acceptor.h"
 namespace tcp
 {
+class IoContext;
 class IoContextPool
 {
   public:
     IoContextPool();
     ~IoContextPool();
     void start();
-    void getIoContext();
+    IoContext* getIoContext();
     void getCurrentThreadIoContext();
 };
 
