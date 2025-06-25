@@ -1,8 +1,8 @@
 #include "waker.h"
-#include "channel.h"
 #include "iocontext.h"
 #include "utils/task.h"
 #include <algorithm>
+#include <coroutine>
 #include <memory>
 #include <sys/eventfd.h>
 namespace tcp
@@ -23,28 +23,31 @@ Waker::~Waker()
     }
 }
 
-void Waker::start()
+auto Waker::start() -> utils::Task<>
 {
+    // assert
     thread_id_ = std::this_thread::get_id();
-    auto channel = std::make_unique<Channel>(fd_);
-    channel->type = Channel::Type::Read;
-    channel->read_callBack = [this]() { onRead(); };
-    io_context_->add(std::move(channel));
+    auto [input_channel, _] = io_context_->add(fd_);
+    while (true)
+    {
+        if (!co_await input_channel.async_pop())
+        {
+            co_return;
+        }
+        clean();
+        std::vector<utils::TaskBase> tasks;
+        need_wakeup_ = true; // Reset the need_wakeup flag
+        {
+            std::lock_guard<std::mutex> guard(tasks_mutex_);
+            tasks.swap(tasks_);
+        }
+        for (auto& task : tasks)
+        {
+            task.resume();
+        }
+    }
 }
 
-void Waker::onRead()
-{
-    clean();
-    std::vector<utils::TaskBase> new_tasks;
-    {
-        std::lock_guard<std::mutex> guard(tasks_mutex_);
-        new_tasks.swap(tasks_);
-    }
-    for (auto& task : new_tasks)
-    {
-        task.resume();
-    }
-}
 void Waker::wakeup()
 {
     uint64_t value = 1; // Arbitrary value to wake up the context

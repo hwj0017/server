@@ -18,11 +18,8 @@ class Connection : public std::enable_shared_from_this<Connection>
     using RecvResult = std::optional<std::string>;
     using SendResult = std::optional<size_t>;
     using TimeTask = std::function<void()>();
-    Connection() = default;
     Connection(Socket&& socket, IoContext* io_context);
     Connection(const Connection&) = delete;
-    Connection(Connection&&) noexcept = default;
-    auto operator=(Connection&&) noexcept -> Connection& = default;
     ~Connection();
     auto start() -> utils::Task<>;
     auto stop() -> utils::Task<>;

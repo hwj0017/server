@@ -1,7 +1,7 @@
 #include "iocontext.h"
+#include "iocontextpool.h"
 #include "socket.h"
 #include "tcp/acceptor.h"
-#include "tcp/inetaddress.h"
 #include "utils/task.h"
 #include <iostream>
 #include <memory>
@@ -14,9 +14,8 @@ auto fun(std::shared_ptr<tcp::Acceptor> acceptor) -> utils::Task<>
 }
 int main()
 {
-    tcp::IoContext io_conetxt;
-    tcp::InetAddress listen_address("127.0.0.1", 8080);
-    auto acceptor = std::make_shared<tcp::Acceptor>(listen_address, &io_conetxt);
+    tcp::IoContextPool pool;
+    auto acceptor = std::make_shared<tcp::Acceptor>("127.0.0.1", 8080, &pool);
     acceptor->start();
     // std::thread waker_thread([&io_conetxt]() -> utils::Task<> {
     //     sleep(2);
@@ -24,5 +23,5 @@ int main()
     //     std::cout << "Waker thread woke up the IoContext" << std::endl;
     // });
     auto task = fun(acceptor);
-    io_conetxt.run();
+    pool.run();
 }

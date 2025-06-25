@@ -16,8 +16,8 @@ struct TaskBase
 {
     TaskBase() noexcept : handle_(nullptr), promise_base_(nullptr) {}
     template <typename T> TaskBase(coroutine_handle<promise_type<T>> handle);
-    TaskBase(const TaskBase&&) = delete;
-    TaskBase& operator=(const TaskBase&&) = delete;
+    TaskBase(const TaskBase&) = delete;
+    TaskBase& operator=(const TaskBase&) = delete;
     TaskBase(TaskBase&& other) noexcept : handle_(other.handle_), promise_base_(other.promise_base_)
     {
         other.handle_ = nullptr;
@@ -73,8 +73,8 @@ template <typename T = void> struct Task : TaskBase
     using promise_type = utils::promise_type<T>;
     Task() : TaskBase() {}
     Task(coroutine_handle<promise_type> handle) : TaskBase(handle) {}
-    Task(const Task&&) = delete;
-    Task& operator=(const Task&&) = delete;
+    Task(const Task&) = delete;
+    Task& operator=(const Task&) = delete;
     Task(Task&& other) noexcept : TaskBase(std::move(other)) {};
     Task& operator=(Task&& other) noexcept
     {
@@ -163,7 +163,7 @@ template <typename T> inline bool TaskBase::await_suspend(coroutine_handle<promi
     {
         return false;
     }
-    promise_base_->continuation_ = TaskBase(waiter, &waiter.promise());
+    promise_base_->continuation_ = TaskBase(waiter);
     return true; // return
                  // true，表示当前协程挂起，让子协程，即handle_所表示的协程恢复。子协程结束完以后又回到waiter。
 }

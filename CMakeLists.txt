@@ -15,7 +15,7 @@ aux_source_directory(./src/tcp src_tcp)
 # aux_source_directory(./src/utils src_utils)
 
 add_executable(tcpserver ${src_tcp} ${src_utils})
-add_executable(tcpclient test/tcp/clienttest.cpp)
+# add_executable(tcpclient test/tcp/clienttest.cpp)
 # add_executable(servertest ${src_tcp} src/test/servertest.cpp)
 # add_executable(httpserver ${src_tcp} ${src_http} src/test/httpServerTest.cpp)
 # add_executable(test ${src_tcp} ${src_http} src/test/test.cpp)
@@ -24,6 +24,7 @@ add_executable(tcpclient test/tcp/clienttest.cpp)
 
 # add_executable(rpcserver ${src_tcp} ${src_rpc} ${src_rpc_serices} ${src_util} ./src/rpc/test/server.cpp)
 # add_executable(rpcclient ${src_tcp} ${src_rpc} ${src_util} ./src/rpc/test/client.cpp)
+# add_executable(channeltest test/utils/channeltest.cpp)
 
 # target_link_libraries(rpcserver protobuf)
 # target_link_libraries(rpcclient protobuf)

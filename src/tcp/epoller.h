@@ -17,9 +17,9 @@ class Epoller
     struct Node
     {
         int fd;
-        Type type;
+        Type type = Type::None;
         Type expired_type = Type::None;
-        Node(int fd, Type type) : fd(fd), type(type) {}
+        Node(int fd) : fd(fd) {}
     };
     Epoller();
     Epoller(const Epoller&) = delete;
