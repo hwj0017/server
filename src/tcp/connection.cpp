@@ -1,13 +1,18 @@
 #include "tcp/connection.h"
 #include "iocontext.h"
+#include "iocontextpool.h"
+#include "node.h"
 #include "socket.h"
 #include "utils/channel.h"
 #include "utils/task.h"
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <queue>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <vector>
 namespace tcp
@@ -20,30 +25,153 @@ struct Connection::Impl
         Stopped
     };
     static constexpr size_t kMaxBufferSize = 1024;
-    Socket socket;
-    IoContext* io_context;
-    utils::Channel<std::string> recv_channel{kMaxBufferSize};
-    utils::Channel<std::string> send_channel{kMaxBufferSize};
-    State state = State::Stopped;
-    Impl(Socket&& socket, IoContext* io_context) : socket(std::move(socket)), io_context(io_context) {}
-    ~Impl() = default;
-    auto start(std::shared_ptr<Connection> self) -> utils::Task<>;
-    auto stop() -> utils::Task<>;
-    auto async_recv() -> utils::Task<RecvResult>;
-    auto async_send(std::string_view data) -> utils::Task<SendResult>;
+    Socket socket_;
+    IoContext* io_context_;
+    Node node_;
+    utils::Channel<std::string> recv_channel_{kMaxBufferSize};
+    utils::Channel<std::string> send_channel_{kMaxBufferSize};
+
+    State state_ = State::Stopped;
+    Impl(Socket&& socket, IoContext* io_context)
+        : socket_(std::move(socket)), io_context_(io_context), node_(socket_.fd())
+    {
+    }
+    ~Impl()
+    {
+        stop_in_thread();
+        std::cout << "close" << std::endl;
+    }
+    auto start() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        if (state_ == State::Started)
+        {
+            co_return;
+        }
+        state_ = State::Started;
+        node_.type = Node::Type::Read;
+        io_context_->add(&node_);
+        node_.read_task = start_recv();
+        node_.write_task = start_send();
+    }
+    auto start_recv() -> utils::Task<>
+    {
+        while (true)
+        {
+            if (recv_channel_.is_full())
+            {
+                io_context_->disable_read(&node_);
+                if (!co_await recv_channel_.not_full())
+                {
+                    // recv_channel_ close
+                    co_return;
+                }
+                io_context_->enable_read(&node_);
+            }
+            co_await std::suspend_always{};
+            if (auto result = socket_.recv(); result.has_value())
+            {
+                recv_channel_.push(std::move(result.value()));
+            }
+            else
+            {
+                stop_in_thread();
+            }
+        }
+    }
+
+    auto start_send() -> utils::Task<>
+    {
+        while (true)
+        {
+            if (send_channel_.is_empty())
+            {
+                // default not write
+                if (!co_await send_channel_.not_empty())
+                {
+                    // send_channel_ close
+                    co_return;
+                }
+            }
+            auto data = send_channel_.pop();
+            std::string_view data_view = data.value();
+            while (!data_view.empty())
+            {
+                io_context_->enable_write(&node_);
+                co_await std::suspend_always{};
+                if (auto result = socket_.send(data_view); result.has_value())
+                {
+                    data_view.remove_prefix(result.value());
+                }
+                else
+                {
+                    stop_in_thread();
+                }
+            }
+        }
+    }
+    void stop_in_thread()
+    {
+        if (state_ == State::Stopped)
+        {
+            return;
+        }
+        state_ = State::Stopped;
+        io_context_->remove(&node_);
+        // may add ~Impl in queue
+        recv_channel_.close();
+        send_channel_.close();
+    }
+
+    auto stop() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        stop_in_thread();
+    }
+    auto async_recv() -> utils::Task<RecvResult> { co_return co_await recv_channel_.async_pop(); }
+    auto async_send(std::string_view data) -> utils::Task<SendResult>
+    {
+        // TODO:
+        if (send_channel_.is_empty())
+        {
+            if (auto result = socket_.send(data); result.has_value())
+            {
+                data.remove_prefix(result.value());
+            }
+            else
+            {
+                stop_in_thread();
+                co_return false;
+            }
+        }
+        if (data.empty())
+        {
+            co_return true;
+        }
+        else
+        {
+            co_return co_await send_channel_.async_push(std::string(data));
+        }
+    }
     // 重置读缓存区
-    auto reset_recv() -> utils::Task<>;
+    auto reset_recv() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        recv_channel_.reset();
+    }
     // 重置写缓存区
-    auto reset_send() -> utils::Task<>;
-    auto start_recv(utils::Channel<>& input_channel) -> utils::Task<>;
-    auto start_send(utils::Channel<>& output_channel) -> utils::Task<>;
+    auto reset_send() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        send_channel_.reset();
+    }
 };
-Connection::Connection(Socket&& socket, IoContext* io_context)
-    : impl_(std::make_unique<Impl>(std::move(socket), io_context))
+Connection::Connection(Socket&& socket_, IoContext* io_context)
+    : impl_(std::make_unique<Impl>(std::move(socket_), io_context))
 {
 }
-Connection::~Connection() = default;
-auto Connection::start() -> utils::Task<> { return impl_->start(shared_from_this()); }
+Connection::~Connection() { delay_destroy(std::move(impl_)); };
+auto Connection::start() -> utils::Task<> { return impl_->start(); }
 auto Connection::stop() -> utils::Task<> { return impl_->stop(); }
 
 auto Connection::async_recv() -> utils::Task<RecvResult> { return impl_->async_recv(); }
@@ -52,114 +180,6 @@ auto Connection::async_send(std::string_view data) -> utils::Task<SendResult> { 
 auto Connection::reset_recv() -> utils::Task<> { return impl_->reset_recv(); }
 auto Connection::reset_send() -> utils::Task<> { return impl_->reset_send(); }
 
-auto Connection::Impl::start(std::shared_ptr<Connection> self) -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    if (state == State::Started)
-    {
-        co_return;
-    }
-    state = State::Started;
-    auto [input_channel, output_channel] = io_context->add(socket.fd(), std::move(self));
-    start_recv(input_channel);
-    start_send(output_channel);
-}
-auto Connection::Impl::stop() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    if (state == State::Started)
-    {
-        state = State::Stopped;
-        io_context->remove(socket.fd());
-    }
-}
-auto Connection::Impl::async_recv() -> utils::Task<RecvResult>
-{
-    co_await io_context->in_thread();
-    co_return co_await recv_channel.async_pop();
-}
+auto Connection::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
-auto Connection::Impl::async_send(std::string_view data) -> utils::Task<SendResult>
-{
-    co_await io_context->in_thread();
-    co_return co_await send_channel.async_push(std::string(data));
-}
-auto Connection::Impl::reset_recv() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    recv_channel.reset();
-}
-
-auto Connection::Impl::reset_send() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    send_channel.reset();
-}
-
-auto Connection::Impl::start_recv(utils::Channel<>& input_channel) -> utils::Task<>
-{
-    // co_await io_context->inThread();
-    while (state == State::Started)
-    {
-        // 监听
-        if (!co_await input_channel.async_pop())
-        {
-            // conection close
-            co_return;
-        }
-        auto result = socket.recv();
-        if (result.has_value())
-        {
-            if (!co_await recv_channel.async_push(std::move(result.value())))
-            {
-                // conection close
-                co_return;
-            }
-        }
-        else
-        {
-            // socket close
-            co_await stop();
-            co_return;
-        }
-    }
-}
-
-auto Connection::Impl::start_send(utils::Channel<>& output_channel) -> utils::Task<>
-{
-    // co_await io_context->inThread();
-    while (state == State::Started)
-    {
-        // 监听
-        auto data = co_await send_channel.async_pop();
-        if (data.has_value())
-        {
-            auto data_view = std::string_view(data.value());
-            while (data_view.empty())
-            {
-                if (!co_await output_channel.async_pop())
-                {
-                    // conection close
-                    co_return;
-                }
-                auto result = socket.send(data_view);
-                if (result.has_value())
-                {
-                    data_view.remove_prefix(result.value());
-                }
-                else
-                {
-                    // socket close
-                    co_await stop();
-                    co_return;
-                }
-            }
-        }
-        else
-        {
-            // conection close
-            co_return;
-        }
-    }
-}
 } // namespace tcp

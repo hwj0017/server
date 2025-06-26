@@ -16,7 +16,7 @@ class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
     using RecvResult = std::optional<std::string>;
-    using SendResult = std::optional<size_t>;
+    using SendResult = bool;
     using TimeTask = std::function<void()>();
     Connection(Socket&& socket, IoContext* io_context);
     Connection(const Connection&) = delete;
@@ -34,6 +34,7 @@ class Connection : public std::enable_shared_from_this<Connection>
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    static auto delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<>;
 };
 
 } // namespace tcp

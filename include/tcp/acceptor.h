@@ -18,6 +18,8 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
     Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool);
     Acceptor(const Acceptor&) = delete;
     ~Acceptor();
+    auto start() -> utils::Task<>;
+    auto stop() -> utils::Task<>;
     auto async_accept() -> utils::Task<AcceptResult>;
     auto reset_accept() -> utils::Task<>;
     auto addTimer(TimeTask, double delay, double interval) -> uint64_t;
@@ -26,6 +28,7 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    static auto delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<>;
 };
 
 } // namespace tcp

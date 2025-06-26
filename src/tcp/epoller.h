@@ -1,4 +1,5 @@
 #pragma once
+#include "node.h"
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <vector>
@@ -7,20 +8,6 @@ namespace tcp
 class Epoller
 {
   public:
-    enum class Type : u_int8_t
-    {
-        None = 0,
-        Read = 1,
-        Write = 2,
-        Both = 3
-    };
-    struct Node
-    {
-        int fd;
-        Type type = Type::None;
-        Type expired_type = Type::None;
-        Node(int fd) : fd(fd) {}
-    };
     Epoller();
     Epoller(const Epoller&) = delete;
     Epoller(Epoller&&) = delete;
@@ -31,49 +18,36 @@ class Epoller
     auto poll() -> std::vector<Node*>;
 
   private:
-    static u_int32_t getEpollEvents(Type type);
-    static auto getTypeFromEpollEvents(u_int32_t events) -> Type;
+    static u_int32_t getEpollEvents(Node::Type type);
+    static auto getTypeFromEpollEvents(u_int32_t events) -> Node::Type;
     static constexpr size_t kMaxEventNum_ = 1024;
     int epollfd_;
     epoll_event events_[kMaxEventNum_];
 };
-inline auto operator|(Epoller::Type lhs, Epoller::Type rhs) -> Epoller::Type
-{
-    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) | static_cast<u_int8_t>(rhs));
-}
 
-inline auto operator&(Epoller::Type lhs, Epoller::Type rhs) -> Epoller::Type
-{
-    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs));
-}
-
-inline bool operator&&(Epoller::Type lhs, Epoller::Type rhs)
-{
-    return static_cast<Epoller::Type>(static_cast<u_int8_t>(lhs) & static_cast<u_int8_t>(rhs)) != Epoller::Type::None;
-}
-inline u_int32_t Epoller::getEpollEvents(Type type)
+inline u_int32_t Epoller::getEpollEvents(Node::Type type)
 {
     u_int32_t events = EPOLLET; // Edge-triggered mode
-    if (type && Type::Read)
+    if (type && Node::Type::Read)
     {
         events |= EPOLLIN;
     }
-    if (type && Type::Write)
+    if (type && Node::Type::Write)
     {
         events |= EPOLLOUT;
     }
     return events;
 }
-inline auto Epoller::getTypeFromEpollEvents(u_int32_t events) -> Type
+inline auto Epoller::getTypeFromEpollEvents(u_int32_t events) -> Node::Type
 {
-    Type type = Type::None;
+    Node::Type type = Node::Type::None;
     if (events & EPOLLIN)
     {
-        type = type | Type::Read;
+        type = type | Node::Type::Read;
     }
     if (events & EPOLLOUT)
     {
-        type = type | Type::Write;
+        type = type | Node::Type::Write;
     }
     return type;
 }

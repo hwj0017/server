@@ -9,126 +9,124 @@
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
+#include <coroutine>
 #include <cstddef>
+#include <iostream>
 #include <memory>
+#include <ostream>
 namespace tcp
 {
 
 struct Acceptor::Impl
 {
-    Socket socket;
-    IoContext* io_context;
-    IoContextPool* io_context_pool;
-    std::unique_ptr<utils::Channel<Socket>> accept_channel;
-    Impl(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool)
-        : socket(Socket::createAcceptorSocket({listen_ip, port})), io_context(io_context_pool->getIoContext()),
-          io_context_pool(io_context_pool)
+    enum class State
     {
-        auto node = std::make_unique<IoContext::Node>(socket.fd());
-        node->read_callback = [this, node = node.get()]() {
-            if (accept_channel->is_full())
-            {
-                io_context->disable_read(node);
-                [this, node]() -> utils::Task<> {
-                    co_await accept_channel->not_full();
-                    io_context->enable_read(node);
-                }();
-            }
-        };
-        node->read_callback = io_context->add();
-    }
-};
-
-Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool) { io }
-struct Acceptor::Impl:
-{
-
+        Started,
+        Stopped
+    };
+    static constexpr size_t kMaxAcceptChannelSize = 1024;
+    Socket socket_;
+    IoContextPool* io_context_pool_;
+    IoContext* io_context_;
+    Node node_;
+    utils::Channel<Socket> accept_channel{kMaxAcceptChannelSize};
     State state = State::Stopped;
-
-    ~Impl() = default;
-
-    void on_write() override
+    Impl(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool)
+        : socket_(Socket::createAcceptorSocket({listen_ip, port})), io_context_pool_(io_context_pool),
+          io_context_(io_context_pool->getIoContext()), node_(socket_.fd())
     {
-        // Do nothing for acceptor
     }
-    auto async_accept() -> utils::Task<AcceptResult>;
-    auto reset_accept() -> utils::Task<>;
+    // run in queue
+    ~Impl() { stop_in_thread(); }
+    auto start() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        if (state == State::Started)
+        {
+            co_return;
+        }
+        state = State::Started;
+        node_.type = Node::Type::Read;
+        io_context_->add(&node_);
+        node_.read_task = start_accept();
+    }
+    auto start_accept() -> utils::Task<>
+    {
+        while (true)
+        {
+            if (accept_channel.is_full())
+            {
+                io_context_->disable_read(&node_);
+                if (!co_await accept_channel.not_full())
+                {
+                    co_return;
+                }
+                io_context_->enable_read(&node_);
+            }
+            co_await std::suspend_always{};
+            auto client_socket_ = socket_.accept();
+            if (client_socket_.has_value())
+            {
+                accept_channel.push(std::move(client_socket_.value()));
+            }
+            else
+            {
+                stop_in_thread();
+            }
+        }
+    }
+    void stop_in_thread()
+    {
+        if (state == State::Stopped)
+        {
+            return;
+        }
+        state = State::Stopped;
+        io_context_->remove(&node_);
+        // may add ~Impl in queue
+        accept_channel.close();
+    }
+    auto stop() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        stop_in_thread();
+    }
+
+    auto async_accept() -> utils::Task<AcceptResult>
+    {
+        co_await io_context_->in_thread();
+        auto client_socket_ = co_await accept_channel.async_pop();
+        if (client_socket_.has_value())
+        {
+            co_return {
+                std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext())};
+        }
+        co_return {};
+    }
+    auto reset_accept() -> utils::Task<>
+    {
+        co_await io_context_->in_thread();
+        accept_channel.reset();
+    }
 };
 
-Acceptor ::~Acceptor() = default;
+Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context__pool)
+    : impl_(std::make_unique<Impl>(listen_ip, port, io_context__pool))
+{
+}
+
+Acceptor ::~Acceptor()
+{
+    // delay destory
+    delay_destroy(std::move(impl_));
+}
 auto Acceptor::start() -> utils::Task<> { return impl_->start(); }
 
 auto Acceptor::stop() -> utils::Task<> { return impl_->stop(); }
 
 auto Acceptor::async_accept() -> utils::Task<AcceptResult> { return impl_->async_accept(); }
-
 auto Acceptor::reset_accept() -> utils::Task<> { return impl_->reset_accept(); }
 
-auto Acceptor::Impl::start() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    if (state == State::Started)
-    {
-        co_return;
-    }
-    state = State::Started;
-    // 协程不持有本身
-    auto [input_channel, _] = io_context->add(socket.fd());
-    accept_channel = io_context->get_channel<Socket>(socket.fd());
-    start_accept(input_channel, accept_channel);
-}
+auto Acceptor::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
-auto Acceptor::Impl::stop() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    if (state == State::Started)
-    {
-        state = State::Stopped;
-        io_context->remove(socket.fd());
-    }
-}
-
-// 定义一个异步接受函数，返回一个AcceptResult类型的Task
-auto Acceptor::Impl::async_accept() -> utils::Task<AcceptResult>
-{
-    auto client_socket = co_await accept_channel.async_pop();
-    if (client_socket.has_value())
-    {
-        co_return {std::make_shared<Connection>(std::move(client_socket.value()), io_context_pool->getIoContext())};
-    }
-    co_return {};
-}
-
-auto Acceptor::Impl::reset_accept() -> utils::Task<>
-{
-    co_await io_context->in_thread();
-    accept_channel.reset();
-}
-
-auto Acceptor::Impl::start_accept(utils::Channel<>* input_channel, utils::Channel<Socket>* accept_channel)
-    -> utils::Task<>
-{
-    // Todo
-    if (!co_await accept_channel->not_full())
-    {
-        // acceptor close
-        co_return;
-    }
-    if (!co_await input_channel.async_pop())
-    {
-        // acceptor close
-        co_return;
-    }
-    auto result = socket.accept();
-    if (result.has_value())
-    {
-        accept_channel.push(std::move(result.value()));
-    }
-    else
-    {
-        // socket close
-        co_await stop();
-        co_return;
-    }
-}
 } // namespace tcp

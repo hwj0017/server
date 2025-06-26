@@ -10,7 +10,6 @@
 namespace tcp
 {
 class IoContext;
-class Socket;
 class Connector : public std::enable_shared_from_this<Connector>
 {
   public:
@@ -34,6 +33,7 @@ class Connector : public std::enable_shared_from_this<Connector>
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    static auto delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<>;
 };
 
 } // namespace tcp

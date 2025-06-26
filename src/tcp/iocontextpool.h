@@ -11,8 +11,8 @@ class IoContextPool
     IoContextPool();
     ~IoContextPool();
     void run();
-    IoContext* getIoContext();
-    void getCurrentThreadIoContext();
+    auto getIoContext() -> IoContext*;
+    auto getCurrentThreadIoContext() -> IoContext*;
 
   private:
     std::unique_ptr<IoContext> io_context_;
