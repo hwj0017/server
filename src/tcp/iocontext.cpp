@@ -1,25 +1,39 @@
 #include "iocontext.h"
 #include "epoller.h"
+#include "node.h"
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
 #include <cassert>
 #include <coroutine>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 namespace tcp
 {
-IoContext::IoContext() : waker_(this) { waker_.start(); }
+IoContext::IoContext() : waker_(this), thread_id_(std::this_thread::get_id()) { waker_.start(); }
 void IoContext::run()
 {
     while (true)
     {
 
         auto nodes = epoller_.poll();
-        waker_.update();
+        need_wakeup_ = false;
         for (auto node : nodes)
         {
             handle_node(static_cast<Node*>(node));
+        }
+        std::vector<utils::TaskBase> temp_tasks;
+        {
+            std::lock_guard<std::mutex> guard(tasks_mutex_);
+            temp_tasks.swap(tasks_);
+            need_wakeup_ = true;
+        }
+        for (auto& task : temp_tasks)
+        {
+            task.resume();
         }
     }
 }
@@ -27,85 +41,32 @@ void IoContext::run()
 void IoContext::handle_node(Node* node)
 {
     // save read mode but not write mode
-    node->type = node->type & Epoller::Type::Read;
-    auto original_type = node->type;
-    if (node->expired_type && Epoller::Type::Read)
+    node->type = node->type & Node::Type::Read;
+    if (node->expired_type && Node::Type::Read)
     {
-        // assert
-        node->input_channel.push();
-        // not pop again
-        if (node->input_channel.is_full())
-        {
-            // not read
-            node->type = node->type & Epoller::Type::Write;
-            // iocontext and node is longer than input_channel and task
-            // listen input channel
-            listen_input_channel(*node);
-        }
+        node->read_task.resume();
     }
-    if (node->expired_type && Epoller::Type::Write)
+    if (node->expired_type && Node::Type::Write)
     {
-        // assert
-        node->output_channel.push();
-        // pop again
-        if (!node->output_channel.is_full())
-        {
-            // write again
-            node->type = node->type | Epoller::Type::Write;
-            // iocontext and node is longer than output_channel and task
-        }
-        else
-        {
-            // listen output channel
-            listen_output_channel(*node);
-        }
-    }
-    if (original_type != node->type)
-    {
-        epoller_.update(node);
+        node->write_task.resume();
     }
 }
 
-auto IoContext::add(int fd, std::any data) -> std::tuple<utils::Channel<>&, utils::Channel<>&>
+void IoContext::add(Node* node)
 {
+    auto fd = node->fd;
     assert(fd >= 0);
     auto it = nodes_.find(fd);
     assert(it == nodes_.end());
-    auto node = std::make_unique<Node>(fd);
-    node->data = std::move(data);
-    auto node_ptr = node.get();
-    epoller_.add(node_ptr);
-    nodes_.emplace(fd, std::move(node));
-    listen_input_channel(*node_ptr);
-    listen_output_channel(*node_ptr);
-    return {node_ptr->input_channel, node_ptr->output_channel};
+    epoller_.add(node);
+    nodes_.emplace(fd, node);
 }
-void IoContext::remove(int fd)
+void IoContext::remove(Node* node)
 {
-    auto it = nodes_.find(fd);
-    if (it != nodes_.end())
+    if (auto it = nodes_.find(node->fd); it != nodes_.end())
     {
-        auto& node = it->second;
-        epoller_.remove(node.get());
+        epoller_.remove(node);
         nodes_.erase(it);
-    }
-}
-
-auto IoContext::listen_input_channel(Node& node) -> utils::Task<>
-{
-    if (!co_await node.input_channel.not_full())
-    {
-        node.type = node.type | Epoller::Type::Read;
-        epoller_.update(&node);
-    }
-}
-
-auto IoContext::listen_output_channel(Node& node) -> utils::Task<>
-{
-    if (!co_await node.output_channel.not_full())
-    {
-        node.type = node.type | Epoller::Type::Write;
-        epoller_.update(&node);
     }
 }
 

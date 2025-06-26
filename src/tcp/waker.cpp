@@ -1,5 +1,6 @@
 #include "waker.h"
 #include "iocontext.h"
+#include "node.h"
 #include "utils/task.h"
 #include <algorithm>
 #include <coroutine>
@@ -7,7 +8,7 @@
 #include <sys/eventfd.h>
 namespace tcp
 {
-Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)), io_context_(io_context)
+Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)), io_context_(io_context), node_(fd_)
 {
     if (fd_ < 0)
     {
@@ -16,34 +17,29 @@ Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXE
 }
 Waker::~Waker()
 {
-    io_context_->remove(fd_);
+    io_context_->remove(&node_);
     if (fd_ >= 0)
     {
         ::close(fd_);
     }
 }
 
-auto Waker::start() -> utils::Task<>
+void Waker::start()
 {
-    // assert
-    thread_id_ = std::this_thread::get_id();
-    auto [input_channel, _] = io_context_->add(fd_);
+    node_.type = Node::Type::Read;
+    io_context_->add(&node_);
+    node_.read_task = clean();
+}
+auto Waker::clean() -> utils::Task<>
+{
     while (true)
     {
-        if (!co_await input_channel.async_pop())
+        co_await std::suspend_always{};
+        uint64_t value = 1;
+        ssize_t n = ::read(fd_, &value, sizeof(value));
+        if (n != sizeof(value))
         {
-            co_return;
-        }
-        clean();
-        std::vector<utils::TaskBase> tasks;
-        need_wakeup_ = true; // Reset the need_wakeup flag
-        {
-            std::lock_guard<std::mutex> guard(tasks_mutex_);
-            tasks.swap(tasks_);
-        }
-        for (auto& task : tasks)
-        {
-            task.resume();
+            throw std::runtime_error("Failed to read to waker");
         }
     }
 }
@@ -59,13 +55,4 @@ void Waker::wakeup()
     }
 }
 
-void Waker::clean()
-{
-    uint64_t value = 1;
-    ssize_t n = ::read(fd_, &value, sizeof(value));
-    if (n != sizeof(value))
-    {
-        throw std::runtime_error("Failed to read to waker");
-    }
-}
 } // namespace tcp
