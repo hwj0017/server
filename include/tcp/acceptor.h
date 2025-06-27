@@ -21,7 +21,7 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
     auto stop() -> utils::Task<>;
     auto async_accept() -> utils::Task<AcceptResult>;
     auto reset_accept() -> utils::Task<>;
-    void removeTimer(uint64_t timer_id);
+    // auto delay()->
 
   private:
     struct Impl;

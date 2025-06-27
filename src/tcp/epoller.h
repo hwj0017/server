@@ -1,5 +1,5 @@
 #pragma once
-#include "node.h"
+#include "ionode.h"
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <vector>
@@ -12,42 +12,42 @@ class Epoller
     Epoller(const Epoller&) = delete;
     Epoller(Epoller&&) = delete;
     ~Epoller();
-    void add(Node* node);
-    void remove(Node* node);
-    void update(Node* node);
-    auto poll() -> std::vector<Node*>;
+    void add(IoNode* node);
+    void remove(IoNode* node);
+    void update(IoNode* node);
+    auto poll() -> std::vector<IoNode*>;
 
   private:
-    static u_int32_t getEpollEvents(Node::Type type);
-    static auto getTypeFromEpollEvents(u_int32_t events) -> Node::Type;
+    static u_int32_t getEpollEvents(IoNode::Type type);
+    static auto getTypeFromEpollEvents(u_int32_t events) -> IoNode::Type;
     static constexpr size_t kMaxEventNum_ = 1024;
     int epollfd_;
     epoll_event events_[kMaxEventNum_];
 };
 
-inline u_int32_t Epoller::getEpollEvents(Node::Type type)
+inline u_int32_t Epoller::getEpollEvents(IoNode::Type type)
 {
     u_int32_t events = EPOLLET; // Edge-triggered mode
-    if (type && Node::Type::Read)
+    if (type && IoNode::Type::Read)
     {
         events |= EPOLLIN;
     }
-    if (type && Node::Type::Write)
+    if (type && IoNode::Type::Write)
     {
         events |= EPOLLOUT;
     }
     return events;
 }
-inline auto Epoller::getTypeFromEpollEvents(u_int32_t events) -> Node::Type
+inline auto Epoller::getTypeFromEpollEvents(u_int32_t events) -> IoNode::Type
 {
-    Node::Type type = Node::Type::None;
+    IoNode::Type type = IoNode::Type::None;
     if (events & EPOLLIN)
     {
-        type = type | Node::Type::Read;
+        type = type | IoNode::Type::Read;
     }
     if (events & EPOLLOUT)
     {
-        type = type | Node::Type::Write;
+        type = type | IoNode::Type::Write;
     }
     return type;
 }

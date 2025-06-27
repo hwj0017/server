@@ -1,5 +1,5 @@
 #pragma once
-#include "node.h"
+#include "ionode.h"
 #include "utils/task.h"
 #include <coroutine>
 #include <mutex>
@@ -20,6 +20,6 @@ class Waker
     auto clean() -> utils::Task<>;
     int fd_;
     IoContext* io_context_;
-    Node node_;
+    IoNode node_;
 };
 } // namespace tcp

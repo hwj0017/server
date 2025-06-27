@@ -1,6 +1,5 @@
 #include "waker.h"
 #include "iocontext.h"
-#include "node.h"
 #include "utils/task.h"
 #include <algorithm>
 #include <coroutine>
@@ -26,7 +25,7 @@ Waker::~Waker()
 
 void Waker::start()
 {
-    node_.type = Node::Type::Read;
+    node_.type = IoNode::Type::Read;
     io_context_->add(&node_);
     node_.read_task = clean();
 }

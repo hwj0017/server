@@ -1,6 +1,6 @@
 #pragma once
 #include "epoller.h"
-#include "node.h"
+#include "ionode.h"
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
@@ -58,61 +58,62 @@ class IoContext
         void await_resume() {}
     };
     // not thread safe
-    void add(Node* node);
-    void remove(Node* node);
-    void enable_read(Node* node)
+    void run();
+    void add(IoNode* node);
+    void remove(IoNode* node);
+    void enable_read(IoNode* node)
     {
-        if (node->type && Node::Type::Read)
+        if (node->type && IoNode::Type::Read)
         {
             return;
         }
-        node->type |= Node::Type::Read;
+        node->type |= IoNode::Type::Read;
         epoller_.update(node);
     }
-    void enable_write(Node* node)
+    void enable_write(IoNode* node)
     {
-        if (node->type && Node::Type::Write)
+        if (node->type && IoNode::Type::Write)
         {
             return;
         }
-        node->type |= Node::Type::Write;
+        node->type |= IoNode::Type::Write;
         epoller_.update(node);
     }
-    void disable_read(Node* node)
+    void disable_read(IoNode* node)
     {
-        if (!(node->type && Node::Type::Read))
+        if (!(node->type && IoNode::Type::Read))
         {
             return;
         }
-        node->type &= Node::Type::Write;
+        node->type &= IoNode::Type::Write;
         epoller_.update(node);
     }
-    void disable_write(Node* node)
+    void disable_write(IoNode* node)
     {
-        if (!(node->type && Node::Type::Write))
+        if (!(node->type && IoNode::Type::Write))
         {
             return;
         }
-        node->type &= Node::Type::Read;
+        node->type &= IoNode::Type::Read;
         epoller_.update(node);
     }
 
     // thread safe
     bool is_in_thread() { return thread_id_ == std::this_thread::get_id(); }
-    auto in_thread() -> InThread { return {this}; }
     auto queue() -> Queue { return {this}; }
 
     auto addTimer(Task, double delay, double interval) -> uint64_t;
 
     void remove_timer(uint64_t timer_id);
+    auto in_thread() -> InThread { return {this}; }
 
-    void run();
+    // auto delay() -> Delay;
 
   private:
-    void handle_node(Node* node);
+    void handle_node(IoNode* node);
     Epoller epoller_;
     Waker waker_;
-    std::unordered_map<int, Node*> nodes_;
+    std::unordered_map<int, IoNode*> nodes_;
     bool need_wakeup_ = true;
     std::thread::id thread_id_{};
     std::vector<utils::BaseTask> tasks_{};

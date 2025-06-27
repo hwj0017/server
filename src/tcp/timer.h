@@ -1,87 +1,57 @@
 #pragma once
-
-#include <atomic>
+#include "ionode.h"
+#include "timernode.h"
+#include "utils/task.h"
+#include <coroutine>
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
 #include <functional>
-
-class Timer;
-class TimeSpec;
-class TimerId
+#include <map>
+#include <memory>
+#include <set>
+#include <sys/time.h>
+#include <type_traits>
+#include <unordered_map>
+namespace tcp
 {
-  public:
-    TimerId(const TimerId& other) : timer_(other.timer_), id_(other.id_) {}
-    // 由调用者保证线程安全
-    // void setTime(const TimeSpec& time);
-
-  private:
-    TimerId(Timer* timer, uint64_t id) : timer_(timer), id_(id) {}
-
-    Timer* timer_;
-    uint64_t id_;
-    friend class TimerQueue;
-};
-
-// 加入比较函数
-class TimeSpec : public timespec
-{
-  public:
-    TimeSpec() : timespec() {}
-    TimeSpec(const timespec& ts) : timespec(ts) {}
-
-    bool operator<(const TimeSpec& other) const
-    {
-        if (tv_sec != other.tv_sec)
-            return tv_sec < other.tv_sec;
-        else
-            return tv_nsec < other.tv_nsec;
-    }
-    bool operator!=(const TimeSpec& other) const { return tv_sec != other.tv_sec || tv_nsec != other.tv_nsec; }
-
-    bool operator==(const TimeSpec& other) const { return !(*this != other); }
-    TimeSpec operator+(const TimeSpec& other) const
-    {
-        return TimeSpec({tv_sec + other.tv_sec, tv_nsec + other.tv_nsec});
-    }
-
-    TimeSpec operator+(double delay) const
-    {
-        return TimeSpec({tv_sec + static_cast<time_t>(delay),
-                         tv_nsec + static_cast<long>((delay - static_cast<time_t>(delay)) * 1e9) % 1000000000});
-    }
-    // 获取当前时间
-    static TimeSpec getNow()
-    {
-        TimeSpec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        return now;
-    }
-    // 无效时间
-    const static TimeSpec inValidExpired;
-};
+class IoContext;
 
 class Timer
 {
   public:
-    Timer(const std::function<void()>& cb, TimeSpec expired, double interval)
-        : cb_(cb), expired_(expired), interval_(interval), id_(count_.fetch_add(1))
+    Timer(IoContext* io_context);
+    ~Timer();
+    struct Delay
     {
-    }
-
-    void restart() { expired_.tv_sec += interval_; }
-    TimeSpec expired() const { return expired_; }
-    bool isRepeat() const { return interval_ > 0; }
-    void handleEvent() const
-    {
-        if (cb_)
-            cb_();
-    }
-    uint64_t id() const { return id_; }
+        Timer* timer;
+        double delay;
+        bool await_ready() { return delay <= 0; }
+        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> handle);
+        void await_resume() {}
+    };
+    auto delay(double delay) -> Delay;
+    // cancel delay
+    auto cancel_delay(size_t id) -> utils::Task<>;
+    // update before wait
+    void update();
 
   private:
-    std::function<void()> cb_;
-    TimeSpec expired_;
-    double interval_;
-    const uint64_t id_;
-    static std::atomic<uint64_t> count_;
+    auto add_task(utils::BaseIdTask task, double delay) -> utils::Task<>;
+    auto on_read() -> utils::Task<>;
+    int timefd_;
+    IoContext* io_context_;
+    IoNode io_node_;
+    // 下次触发时间，就是文件描述符的到期时间
+    TimeSpec nextExpire_;
+    // 存放所有定时器
+    std::unordered_map<size_t, std::unique_ptr<TimerNode>> timer_nodes_;
+    std::set<TimerNode*, TimerNode::Less> time_queue_;
+    friend struct Delay;
+    // 存放在执行handleRead中删除的定时器
+    // 由addTimer插入到loop队列中
+    // void removeTimerInLoop(TimerId timerId);
+    // void getExpiredTimers(const TimeSpec& now, std::vector<TimerPtr>& expiredTimers);
+    // static int createTimerFd();
 };
+} // namespace tcp

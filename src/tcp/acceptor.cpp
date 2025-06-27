@@ -28,7 +28,7 @@ struct Acceptor::Impl
     Socket socket_;
     IoContextPool* io_context_pool_;
     IoContext* io_context_;
-    Node node_;
+    IoNode node_;
     utils::Channel<Socket> accept_channel{kMaxAcceptChannelSize};
     State state = State::Stopped;
     Impl(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool)
@@ -46,7 +46,7 @@ struct Acceptor::Impl
             co_return;
         }
         state = State::Started;
-        node_.type = Node::Type::Read;
+        node_.type = IoNode::Type::Read;
         io_context_->add(&node_);
         node_.read_task = start_accept();
     }

@@ -27,7 +27,7 @@ class BaseTask
 
     template <typename promise_type>
     BaseTask(coroutine_handle<promise_type> handle)
-        : handle_(coroutine_handle<base_promise_type>::from_address(handle.address()))
+        : BaseTask(coroutine_handle<base_promise_type>::from_promise(handle.promise()))
     {
         static_assert(std::is_base_of_v<base_promise_type, promise_type>);
     }
@@ -66,7 +66,7 @@ class BaseTask
         static_assert(std::is_base_of_v<base_promise_type, promise_type>);
         handle_.promise().continuation_ = std::make_unique<BaseTask>(waiter);
     }
-    void resume() noexcept { handle_.resume(); }
+    void resume() const noexcept { handle_.resume(); }
     bool done() noexcept { return handle_.done(); }
     operator bool() { return bool(handle_); }
     struct base_promise_type
@@ -91,20 +91,6 @@ class BaseTask
   protected:
     coroutine_handle<base_promise_type> handle_;
 };
-
-// template <typename T> struct Task;
-// template <typename T> struct promise_type final : base_promise_type
-// {
-//     T result;
-//     void return_value(T value) { result = std::move(value); }
-//     auto get_return_object() -> Task<T>;
-// };
-
-// template <> struct promise_type<void> final : base_promise_type
-// {
-//     void return_void() {}
-//     auto get_return_object() -> Task<void>;
-// };
 
 // return type
 template <typename T = void> class Task : public BaseTask
@@ -165,12 +151,65 @@ template <typename promise_type> struct SelfTask
     coroutine_handle<promise_type> handle_;
 };
 
-// template <typename T> struct Awaitable
-// {
-//     T result;
-//     BaseTask task;
-//     bool await_ready() { return false; }
-//     void await_suspend(coroutine_handle<promise_type<T>> waiter) { task = BaseTask(waiter, &waiter.promise()); }
-//     T await_resume() { return std::move(result); }
-// };
+// task with id
+class BaseIdTask : public BaseTask
+{
+  public:
+    struct base_id_promise_type : public base_promise_type
+    {
+        size_t id{next_id++};
+        static std::atomic<size_t> next_id;
+    };
+    BaseIdTask() : BaseTask() {}
+    template <typename promise_type> BaseIdTask(coroutine_handle<promise_type> handle) : BaseTask(handle)
+    {
+        static_assert(std::is_base_of_v<base_id_promise_type, promise_type>);
+    }
+    BaseIdTask(BaseIdTask&& other) noexcept : BaseTask(std::move(other)) {}
+    ~BaseIdTask() noexcept = default;
+    size_t id() const noexcept { return static_cast<base_id_promise_type&>(handle_.promise()).id; }
+};
+
+template <typename T = void> class IdTask : public BaseIdTask
+{
+  public:
+    struct promise_type : base_id_promise_type
+    {
+        T result;
+        void return_value(T value) { result = std::move(value); }
+        auto get_return_object() { return IdTask<T>{coroutine_handle<promise_type>::from_promise(*this)}; }
+    };
+    IdTask() = default;
+    IdTask(coroutine_handle<promise_type> handle) : BaseTask(handle) {}
+
+    IdTask(IdTask&& other) noexcept : BaseTask(std::move(other)) {};
+    auto& operator=(IdTask&& other) noexcept
+    {
+        BaseTask::operator=(std::move(other));
+        return *this;
+    }
+    ~IdTask() = default;
+    auto await_resume() -> T { return std::move(static_cast<promise_type&>(handle_.promise()).result); }
+};
+
+template <> class IdTask<void> : public BaseIdTask
+{
+  public:
+    struct promise_type : base_id_promise_type
+    {
+        void return_void() {}
+        auto get_return_object() { return IdTask<void>{coroutine_handle<promise_type>::from_promise(*this)}; }
+    };
+    IdTask() = default;
+    IdTask(coroutine_handle<promise_type> handle) : BaseIdTask(handle) {}
+    IdTask(IdTask&& other) noexcept : BaseIdTask(std::move(other)) {};
+    ~IdTask() = default;
+    auto& operator=(IdTask&& other) noexcept
+    {
+        BaseTask::operator=(std::move(other));
+        return *this;
+    }
+    void await_resume() {}
+};
+
 } // namespace utils
