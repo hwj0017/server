@@ -34,8 +34,15 @@ class BaseTask
     BaseTask(BaseTask&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
     BaseTask& operator=(BaseTask&& other) noexcept
     {
-        handle_ = other.handle_;
-        other.handle_ = nullptr;
+        if (this != &other)
+        {
+            if (handle_ && --handle_.promise().count == 0)
+            {
+                handle_.destroy();
+            }
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
         return *this;
     }
     ~BaseTask() noexcept

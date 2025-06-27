@@ -39,11 +39,11 @@ int main()
     tcp::IoContextPool pool;
     auto acceptor = std::make_shared<tcp::Acceptor>("127.0.0.1", 8080, &pool);
     acceptor->start();
-    // std::thread waker_thread([&io_conetxt]() -> utils::Task<> {
-    //     sleep(2);
-    //     co_await io_conetxt.inThread();
-    //     std::cout << "Waker thread woke up the IoContext" << std::endl;
-    // });
+    std::thread waker_thread([&]() -> utils::Task<> {
+        sleep(2);
+        co_await pool.getIoContext()->in_thread();
+        std::cout << "Waker thread woke up the IoContext" << std::endl;
+    });
     auto task = fun(std::move(acceptor));
     pool.run();
 }
