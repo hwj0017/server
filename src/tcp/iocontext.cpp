@@ -25,7 +25,7 @@ void IoContext::run()
         {
             handle_node(static_cast<Node*>(node));
         }
-        std::vector<utils::TaskBase> temp_tasks;
+        std::vector<utils::BaseTask> temp_tasks;
         {
             std::lock_guard<std::mutex> guard(tasks_mutex_);
             temp_tasks.swap(tasks_);

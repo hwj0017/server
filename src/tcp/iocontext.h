@@ -29,7 +29,7 @@ class IoContext
         IoContext* io_context;
         InThread(IoContext* io_context) : io_context(io_context) {}
         bool await_ready() { return io_context->is_in_thread(); }
-        template <typename T> void await_suspend(std::coroutine_handle<utils::promise_type<T>> handle)
+        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> handle)
         {
             std::lock_guard<std::mutex> guard(io_context->tasks_mutex_);
             io_context->tasks_.emplace_back(handle);
@@ -46,7 +46,7 @@ class IoContext
         IoContext* io_context;
         Queue(IoContext* io_context) : io_context(io_context) {}
         bool await_ready() { return false; }
-        template <typename T> void await_suspend(std::coroutine_handle<utils::promise_type<T>> handle)
+        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> handle)
         {
             std::lock_guard<std::mutex> guard(io_context->tasks_mutex_);
             io_context->tasks_.emplace_back(handle);
@@ -115,7 +115,7 @@ class IoContext
     std::unordered_map<int, Node*> nodes_;
     bool need_wakeup_ = true;
     std::thread::id thread_id_{};
-    std::vector<utils::TaskBase> tasks_{};
+    std::vector<utils::BaseTask> tasks_{};
     std::mutex tasks_mutex_{};
     friend class InThread;
 };

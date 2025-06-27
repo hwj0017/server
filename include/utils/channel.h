@@ -3,6 +3,7 @@
 #include "utils/task.h"
 #include <cassert>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <queue>
 namespace utils
@@ -50,9 +51,9 @@ class ChannelBase
         ChannelBase& channel_;
         Empty(ChannelBase& channel) : channel_(channel) {}
         bool await_ready() { return channel_.is_closed() || channel_.is_empty(); }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_3_.push(coro);
+            channel_.tasks_3_.push({coro});
         }
         bool await_resume() { return channel_.is_closed(); }
     };
@@ -61,9 +62,9 @@ class ChannelBase
         ChannelBase& channel_;
         Full(ChannelBase& channel) : channel_(channel) {}
         bool await_ready() { return channel_.is_closed() || channel_.is_full(); }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_3_.push(coro);
+            channel_.tasks_3_.push({coro});
         }
         bool await_resume() { return channel_.is_closed(); }
     };
@@ -72,9 +73,9 @@ class ChannelBase
         ChannelBase& channel_;
         NotEmpty(ChannelBase& channel) : channel_(channel) {}
         bool await_ready() { return channel_.is_closed() || !channel_.is_empty(); }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_2_.push(coro);
+            channel_.tasks_2_.push({coro});
         }
         bool await_resume() { return channel_.is_closed(); }
     };
@@ -83,9 +84,9 @@ class ChannelBase
         ChannelBase& channel_;
         NotFull(ChannelBase& channel) : channel_(channel) {}
         bool await_ready() { return channel_.is_closed() || !channel_.is_full(); }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_2_.push(coro);
+            channel_.tasks_2_.push({coro});
         }
         bool await_resume() { return channel_.is_closed(); }
     };
@@ -95,9 +96,9 @@ class ChannelBase
         ChannelBase& channel_;
         Closed(ChannelBase& channel) : channel_(channel) {}
         bool await_ready() { return channel_.is_closed(); }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_4_.push(coro);
+            channel_.tasks_4_.push({coro});
         }
         void await_resume() {}
     };
@@ -114,13 +115,13 @@ class ChannelBase
     int empty_size_;
     bool is_closed_ = false;
     // await pop or push
-    std::queue<TaskBase> tasks_1_;
+    std::queue<BaseTask> tasks_1_;
     // await not empty or not full
-    std::queue<TaskBase> tasks_2_;
+    std::queue<BaseTask> tasks_2_;
     // await empty or full
-    std::queue<TaskBase> tasks_3_;
+    std::queue<BaseTask> tasks_3_;
     // await closed
-    std::queue<TaskBase> tasks_4_;
+    std::queue<BaseTask> tasks_4_;
     friend struct Empty;
     friend struct Full;
     friend struct NotEmpty;
@@ -171,7 +172,7 @@ template <typename T> class Channel : public ChannelBase
             };
             return ret;
         }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promiss_type> void await_suspend(coroutine_handle<promiss_type> coro)
         {
             channel_.tasks_1_.push({coro});
         }
@@ -226,7 +227,7 @@ template <typename T> class Channel : public ChannelBase
             }
             return ret;
         }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
             channel_.tasks_1_.push({coro});
         }
@@ -448,7 +449,7 @@ template <> class Channel<void> : public ChannelBase
             }
             return ret;
         }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
             channel_.tasks_1_.push({coro});
         }
@@ -500,7 +501,7 @@ template <> class Channel<void> : public ChannelBase
             }
             return ret;
         }
-        template <typename R> void await_suspend(coroutine_handle<promise_type<R>> coro)
+        template <typename promise_type> void await_suspend(coroutine_handle<promise_type> coro)
         {
             channel_.tasks_1_.push({coro});
         }

@@ -1,8 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <coroutine>
 #include <cstddef>
 #include <iostream>
+#include <memory>
+#include <type_traits>
 
 using std::coroutine_handle;
 using std::suspend_always;
@@ -10,170 +13,157 @@ using std::suspend_never;
 
 namespace utils
 {
-struct promise_type_base;
-template <typename T> struct promise_type;
-struct TaskBase
+// struct base_promise_type;
+// template <typename T> struct promise_type;
+// RAII Base Task
+class BaseTask
 {
-    TaskBase() noexcept : handle_(nullptr), promise_base_(nullptr) {}
-    template <typename T> TaskBase(coroutine_handle<promise_type<T>> handle);
-    TaskBase(const TaskBase&) = delete;
-    TaskBase& operator=(const TaskBase&) = delete;
-    TaskBase(TaskBase&& other) noexcept : handle_(other.handle_), promise_base_(other.promise_base_)
+  public:
+    struct base_promise_type;
+
+    BaseTask() : handle_(nullptr) {}
+
+    BaseTask(coroutine_handle<base_promise_type> handle) : handle_(handle) { ++handle.promise().count; }
+
+    template <typename promise_type>
+    BaseTask(coroutine_handle<promise_type> handle)
+        : handle_(coroutine_handle<base_promise_type>::from_address(handle.address()))
     {
+        static_assert(std::is_base_of_v<base_promise_type, promise_type>);
+    }
+    BaseTask(BaseTask&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
+    BaseTask& operator=(BaseTask&& other) noexcept
+    {
+        handle_ = other.handle_;
         other.handle_ = nullptr;
-        other.promise_base_ = nullptr;
-    }
-    TaskBase& operator=(TaskBase&& other) noexcept;
-    ~TaskBase() noexcept;
-    bool await_ready() { return false; }
-    // 如果执行完，返回true;否则保存协程，返回false;
-    template <typename T> bool await_suspend(coroutine_handle<promise_type<T>> waiter);
-    void resume() { handle_.resume(); }
-
-    operator bool() { return bool(handle_); }
-    coroutine_handle<void> handle_;
-    promise_type_base* promise_base_;
-};
-struct promise_type_base
-{
-    TaskBase continuation_; // who waits on this coroutine
-    size_t count = 0;
-    suspend_never initial_suspend() { return {}; }
-    // 当前协程运行完毕，在这里回到父协程，即continuation_
-    auto final_suspend() noexcept
-    {
-        if (continuation_)
-        {
-            continuation_.resume();
-        }
-        return std::suspend_always{};
-    }
-
-    void unhandled_exception()
-    { // TODO:
-        std::exit(-1);
-    }
-}; // struct promise_type_base
-
-template <typename T> struct Task;
-template <typename T> struct promise_type final : promise_type_base
-{
-    T result;
-    void return_value(T value) { result = std::move(value); }
-    auto get_return_object() -> Task<T>;
-};
-
-template <> struct promise_type<void> final : promise_type_base
-{
-    void return_void() {}
-    auto get_return_object() -> Task<void>;
-};
-template <typename T = void> struct Task : TaskBase
-{
-    using promise_type = utils::promise_type<T>;
-    Task() : TaskBase() {}
-    Task(coroutine_handle<promise_type> handle) : TaskBase(handle) {}
-    Task(const Task&) = delete;
-    Task& operator=(const Task&) = delete;
-    Task(Task&& other) noexcept : TaskBase(std::move(other)) {};
-    Task& operator=(Task&& other) noexcept
-    {
-        TaskBase::operator=(std::move(other));
         return *this;
-    };
-    ~Task() = default;
-    auto await_resume() -> T;
-};
-
-// template <> struct Task<void>
-// {
-//     using promise_type = utils::promise_type<void>;
-//     Task() : handle_(nullptr) {}
-//     Task(coroutine_handle<promise_type_base> handle) : handle_(handle) {}
-//     Task(const Task&&) = delete;
-//     Task& operator=(const Task&&) = delete;
-//     Task(Task&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
-//     ~Task();
-//     bool await_ready() { return false; }
-//     void await_resume();
-//     bool await_suspend(coroutine_handle<> waiter);
-//     void resume() { handle_.resume(); }
-
-//     coroutine_handle<promise_type_base> handle_;
-// };
-// 用来获取自身句柄
-template <typename T = void> struct SelfTask
-{
-    bool await_ready() noexcept { return false; }
-    bool await_suspend(coroutine_handle<promise_type<T>> coro) noexcept
-    {
-        task = Task<T>(coro);
-        return false;
     }
-    auto await_resume() noexcept -> Task<T> { return std::move(task); }
-    Task<T> task;
-};
-template <typename T>
-TaskBase::TaskBase(coroutine_handle<promise_type<T>> handle) : handle_(handle), promise_base_(&handle.promise())
-{
-    ++promise_base_->count;
-}
-inline TaskBase::~TaskBase() noexcept
-{
-    if (handle_ && --promise_base_->count == 0)
+    ~BaseTask() noexcept
     {
-        handle_.destroy();
-    }
-}
-inline auto TaskBase::operator=(TaskBase&& other) noexcept -> TaskBase&
-{
-    if (this != &other)
-    {
-        if (handle_ && --promise_base_->count == 0)
+        if (handle_ && --handle_.promise().count == 0)
         {
             handle_.destroy();
         }
-        handle_ = other.handle_;
-        promise_base_ = other.promise_base_;
-        other.handle_ = nullptr;
-        other.promise_base_ = nullptr;
     }
-    return *this;
-}
-
-template <typename T> auto promise_type<T>::get_return_object() -> Task<T>
-{
-    return Task<T>{coroutine_handle<promise_type<T>>::from_promise(*this)};
-}
-inline auto promise_type<void>::get_return_object() -> Task<void>
-{
-    return Task<void>{coroutine_handle<promise_type<void>>::from_promise(*this)};
-}
-template <typename T> auto Task<T>::await_resume() -> T
-{
-    auto promise = static_cast<promise_type*>(promise_base_);
-    auto result = std::move(promise->result);
-    return result;
-}
-template <> inline void Task<void>::await_resume() {}
-template <typename T> inline bool TaskBase::await_suspend(coroutine_handle<promise_type<T>> waiter)
-{
-
-    if (handle_.done())
+    bool await_ready()
     {
+        if (done())
+        {
+            return true;
+        }
         return false;
     }
-    promise_base_->continuation_ = TaskBase(waiter);
-    return true; // return
-                 // true，表示当前协程挂起，让子协程，即handle_所表示的协程恢复。子协程结束完以后又回到waiter。
-}
-
-template <typename T> struct Awaitable
-{
-    T result;
-    TaskBase task;
-    bool await_ready() { return false; }
-    void await_suspend(coroutine_handle<promise_type<T>> waiter) { task = TaskBase(waiter, &waiter.promise()); }
-    T await_resume() { return std::move(result); }
+    // 如果执行完，返回true;否则保存协程，返回false;
+    template <typename promise_type> void await_suspend(coroutine_handle<promise_type> waiter)
+    {
+        static_assert(std::is_base_of_v<base_promise_type, promise_type>);
+        handle_.promise().continuation_ = std::make_unique<BaseTask>(waiter);
+    }
+    void resume() noexcept { handle_.resume(); }
+    bool done() noexcept { return handle_.done(); }
+    operator bool() { return bool(handle_); }
+    struct base_promise_type
+    {
+        std::unique_ptr<BaseTask> continuation_; // who waits on this coroutine
+        size_t count = 0;
+        suspend_never initial_suspend() { return {}; }
+        // 当前协程运行完毕，在这里回到父协程，即continuation_
+        auto final_suspend() noexcept
+        {
+            if (continuation_)
+            {
+                continuation_->resume();
+            }
+            return std::suspend_always{};
+        }
+        void unhandled_exception()
+        { // TODO:
+            std::exit(-1);
+        }
+    }; // struct base_promise_type
+  protected:
+    coroutine_handle<base_promise_type> handle_;
 };
+
+// template <typename T> struct Task;
+// template <typename T> struct promise_type final : base_promise_type
+// {
+//     T result;
+//     void return_value(T value) { result = std::move(value); }
+//     auto get_return_object() -> Task<T>;
+// };
+
+// template <> struct promise_type<void> final : base_promise_type
+// {
+//     void return_void() {}
+//     auto get_return_object() -> Task<void>;
+// };
+
+// return type
+template <typename T = void> class Task : public BaseTask
+{
+  public:
+    struct promise_type : base_promise_type
+    {
+        T result;
+        void return_value(T value) { result = std::move(value); }
+        auto get_return_object() -> Task<T> { return Task<T>{coroutine_handle<promise_type>::from_promise(*this)}; }
+    };
+    Task() = default;
+    Task(coroutine_handle<promise_type> handle) : BaseTask(handle) {}
+
+    Task(Task&& other) noexcept : BaseTask(std::move(other)) {};
+    auto& operator=(Task&& other) noexcept
+    {
+        BaseTask::operator=(std::move(other));
+        return *this;
+    }
+    ~Task() = default;
+    auto await_resume() -> T { return std::move(static_cast<promise_type&>(handle_.promise()).result); }
+};
+
+template <> class Task<void> : public BaseTask
+{
+  public:
+    struct promise_type : base_promise_type
+    {
+        void return_void() {}
+        auto get_return_object() -> Task<void>
+        {
+            return Task<void>{coroutine_handle<promise_type>::from_promise(*this)};
+        }
+    };
+    Task() = default;
+    Task(coroutine_handle<promise_type> handle) : BaseTask(handle) {}
+    Task(Task&& other) noexcept : BaseTask(std::move(other)) {};
+    ~Task() = default;
+    auto& operator=(Task&& other) noexcept
+    {
+        BaseTask::operator=(std::move(other));
+        return *this;
+    }
+    void await_resume() {}
+};
+
+// 用来获取自身句柄
+template <typename promise_type> struct SelfTask
+{
+    bool await_ready() noexcept { return false; }
+    bool await_suspend(coroutine_handle<promise_type> handle) noexcept
+    {
+        handle_ = handle;
+        return false;
+    }
+    auto await_resume() noexcept { return handle_; }
+    coroutine_handle<promise_type> handle_;
+};
+
+// template <typename T> struct Awaitable
+// {
+//     T result;
+//     BaseTask task;
+//     bool await_ready() { return false; }
+//     void await_suspend(coroutine_handle<promise_type<T>> waiter) { task = BaseTask(waiter, &waiter.promise()); }
+//     T await_resume() { return std::move(result); }
+// };
 } // namespace utils

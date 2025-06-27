@@ -14,7 +14,6 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
 {
   public:
     using AcceptResult = std::optional<std::shared_ptr<Connection>>;
-    using TimeTask = std::function<void()>();
     Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool);
     Acceptor(const Acceptor&) = delete;
     ~Acceptor();
@@ -22,7 +21,6 @@ class Acceptor : public std::enable_shared_from_this<Acceptor>
     auto stop() -> utils::Task<>;
     auto async_accept() -> utils::Task<AcceptResult>;
     auto reset_accept() -> utils::Task<>;
-    auto addTimer(TimeTask, double delay, double interval) -> uint64_t;
     void removeTimer(uint64_t timer_id);
 
   private:
