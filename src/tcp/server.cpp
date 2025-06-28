@@ -1,22 +1,49 @@
-// #include "server.h"
-// #include <unistd.h>
+#include "tcp/server.h"
+#include "iocontext.h"
+#include "iocontextpool.h"
+#include <memory>
+#include <unistd.h>
+#include <unordered_map>
 
-// namespace tcp
-// {
+namespace tcp
+{
+struct Server::Impl
+{
+    IoContext io_context_;
+    IoContextPool pool_;
+    Impl() {};
+    ~Impl() = default;
+    void start()
+    {
+        pool_.run();
+        io_context_.run();
+    }
+    auto new_acceptor(std::string_view listen_ip, uint16_t port) -> std::shared_ptr<Acceptor>
+    {
+        return std::make_shared<Acceptor>(listen_ip, port, &io_context_, &pool_);
+    }
+    auto new_connector(std::string_view server_ip, uint16_t port) -> std::shared_ptr<Connector>
+    {
+        return std::make_shared<Connector>(server_ip, port, pool_.getCurrentThreadIoContext());
+    }
+};
 
-// Task Server::start()
-// {
-//     while (true)
-//     {
-//         int fd = co_await acceptor_.newConnection();
-//         if (fd == -1)
-//         {
-//             close(fd);
-//             break;
-//         }
-//         // todo
-//         int fd
-//     }
-// }
+Server::Server() : impl_(std::make_unique<Impl>()) {}
+Server::~Server() = default;
 
-// } // namespace tcp
+void Server::start()
+{
+    serve();
+    impl_->start();
+}
+
+auto Server::new_acceptor(std::string_view listen_ip, uint16_t port) -> std::shared_ptr<Acceptor>
+{
+    return impl_->new_acceptor(listen_ip, port);
+}
+
+auto Server::new_connector(std::string_view server_ip, uint16_t port) -> std::shared_ptr<Connector>
+{
+    return impl_->new_connector(server_ip, port);
+}
+} // namespace tcp

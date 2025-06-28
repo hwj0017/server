@@ -165,6 +165,8 @@ struct Connection::Impl
         co_await io_context_->in_thread();
         send_channel_.reset();
     }
+    auto delay(double delay) -> Delay { return Delay{io_context_, delay}; }
+    auto cancel_delay(size_t id) -> utils::Task<> { return io_context_->cancel_delay(id); }
 };
 Connection::Connection(Socket&& socket_, IoContext* io_context)
     : impl_(std::make_unique<Impl>(std::move(socket_), io_context))
@@ -180,6 +182,8 @@ auto Connection::async_send(std::string_view data) -> utils::Task<SendResult> { 
 auto Connection::reset_recv() -> utils::Task<> { return impl_->reset_recv(); }
 auto Connection::reset_send() -> utils::Task<> { return impl_->reset_send(); }
 
+auto Connection::delay(double delay) -> Delay { return impl_->delay(delay); }
+auto Connection::cancel_delay(size_t id) -> utils::Task<> { return impl_->cancel_delay(id); }
 auto Connection::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
 } // namespace tcp

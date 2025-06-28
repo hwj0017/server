@@ -1,6 +1,7 @@
 #include "iocontext.h"
-#include "node.h"
+#include "ionode.h"
 #include "socket.h"
+#include "tcp/awaitables.h"
 #include "tcp/connector.h"
 #include "utils/channel.h"
 #include "utils/task.h"
@@ -25,7 +26,7 @@ struct Connector::Impl
     static constexpr size_t kMaxBufferSize = 1024;
     Socket socket_;
     IoContext* io_context_;
-    Node node_;
+    IoNode node_;
     utils::Channel<std::string> recv_channel_{kMaxBufferSize};
     utils::Channel<std::string> send_channel_{kMaxBufferSize};
 
@@ -44,7 +45,7 @@ struct Connector::Impl
             co_return;
         }
         state_ = State::Started;
-        node_.type = Node::Type::Both;
+        node_.type = IoNode::Type::Both;
         io_context_->add(&node_);
         node_.read_task = start_recv();
         node_.write_task = start_send();
@@ -101,7 +102,7 @@ struct Connector::Impl
             }
             while (!data.empty())
             {
-                node_.type |= Node::Type::Write;
+                node_.type |= IoNode::Type::Write;
                 io_context_->enable_write(&node_);
                 co_await std::suspend_always{};
                 if (auto result = socket_.send(data); result.has_value())
@@ -150,6 +151,8 @@ struct Connector::Impl
         co_await io_context_->in_thread();
         send_channel_.reset();
     }
+    auto delay(double delay) -> Delay { return Delay{io_context_, delay}; }
+    auto cancel_delay(size_t id) -> utils::Task<> { return io_context_->cancel_delay(id); }
 };
 Connector::Connector(std::string_view server_ip, uint16_t port, IoContext* io_context_)
     : impl_(std::make_unique<Impl>(server_ip, port, io_context_))
@@ -165,6 +168,8 @@ auto Connector::async_send(std::string_view data) -> utils::Task<SendResult> { r
 auto Connector::reset_recv() -> utils::Task<> { return impl_->reset_recv(); }
 auto Connector::reset_send() -> utils::Task<> { return impl_->reset_send(); }
 
+auto Connector::delay(double delay) -> Delay { return impl_->delay(delay); }
+auto Connector::cancel_delay(size_t id) -> utils::Task<> { return impl_->cancel_delay(id); }
 auto Connector::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
 } // namespace tcp

@@ -1,6 +1,7 @@
 #pragma once
 #include "epoller.h"
 #include "ionode.h"
+#include "timer.h"
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
@@ -102,9 +103,12 @@ class IoContext
     bool is_in_thread() { return thread_id_ == std::this_thread::get_id(); }
     auto queue() -> Queue { return {this}; }
 
-    auto addTimer(Task, double delay, double interval) -> uint64_t;
+    auto add_delay(utils::BaseIdTask&& task, double delay) -> utils::Task<>
+    {
+        return timer_.add_delay(std::move(task), delay);
+    }
 
-    void remove_timer(uint64_t timer_id);
+    auto cancel_delay(size_t id) -> utils::Task<> { return timer_.cancel_delay(id); }
     auto in_thread() -> InThread { return {this}; }
 
     // auto delay() -> Delay;
@@ -113,6 +117,7 @@ class IoContext
     void handle_node(IoNode* node);
     Epoller epoller_;
     Waker waker_;
+    Timer timer_;
     std::unordered_map<int, IoNode*> nodes_;
     bool need_wakeup_ = true;
     std::thread::id thread_id_{};

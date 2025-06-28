@@ -1,4 +1,5 @@
 #pragma once
+#include "tcp/awaitables.h"
 #include "tcp/connection.h"
 #include "utils/task.h"
 #include <cstdint>
@@ -9,19 +10,21 @@
 
 namespace tcp
 {
+class IoContext;
 class IoContextPool;
 class Acceptor : public std::enable_shared_from_this<Acceptor>
 {
   public:
     using AcceptResult = std::optional<std::shared_ptr<Connection>>;
-    Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool);
+    Acceptor(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool);
     Acceptor(const Acceptor&) = delete;
     ~Acceptor();
     auto start() -> utils::Task<>;
     auto stop() -> utils::Task<>;
     auto async_accept() -> utils::Task<AcceptResult>;
     auto reset_accept() -> utils::Task<>;
-    // auto delay()->
+    auto delay(double delay) -> Delay;
+    auto cancel_delay(size_t id) -> utils::Task<>;
 
   private:
     struct Impl;

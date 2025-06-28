@@ -1,4 +1,5 @@
 #pragma once
+#include "tcp/awaitables.h"
 #include "utils/task.h"
 #include <any>
 #include <coroutine>
@@ -28,8 +29,8 @@ class Connection : public std::enable_shared_from_this<Connection>
     auto async_send(std::string_view data) -> utils::Task<SendResult>;
     auto reset_recv() -> utils::Task<>;
     auto reset_send() -> utils::Task<>;
-    auto addTimer(TimeTask, double delay, double interval) -> uint64_t;
-    void removeTimer(uint64_t timer_id);
+    auto delay(double delay) -> Delay;
+    auto cancel_delay(size_t id) -> utils::Task<>;
 
   private:
     struct Impl;

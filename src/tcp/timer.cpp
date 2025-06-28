@@ -15,20 +15,19 @@
 #include <vector>
 namespace tcp
 {
-template <typename promise_type> void Timer::Delay::await_suspend(std::coroutine_handle<promise_type> handle)
-{
-    timer->add_task(utils::BaseIdTask{handle}, delay);
-}
 Timer::Timer(IoContext* io_context)
     : io_context_(io_context), timefd_(timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)), io_node_(timefd_),
       nextExpire_(TimeSpec::inValidExpired)
 {
     assert(timefd_ != -1);
-    io_node_.expired_type = IoNode::Type::Read;
+}
+
+void Timer::start()
+{
+    io_node_.type = IoNode::Type::Read;
     io_context_->add(&io_node_);
     io_node_.read_task = on_read();
 }
-
 Timer::~Timer() { ::close(timefd_); }
 
 auto Timer::on_read() -> utils::Task<>
@@ -42,13 +41,14 @@ auto Timer::on_read() -> utils::Task<>
         ssize_t n = ::read(timefd_, &count, sizeof(count));
         assert(n != sizeof(count));
         // 遍历定时器
-        TimerNode target{now};
-        auto bound = time_queue_.lower_bound(&target);
-        for (auto it = time_queue_.begin(); it != bound;)
+        for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
         {
-            (*it)->task_.resume();
             it = time_queue_.erase(it);
-            timer_nodes_.erase((*it)->id_);
+            auto it_1 = timer_nodes_.find((*it)->task_.id());
+            assert(it_1 != timer_nodes_.end());
+            auto timer_node = std::move(it_1->second);
+            timer_nodes_.erase(it_1);
+            timer_node->task_.resume();
         }
     }
 }
@@ -76,7 +76,7 @@ void Timer::update()
         nextExpire_ = earlyExpired;
     }
 }
-auto Timer::add_task(utils::BaseIdTask task, double delay) -> utils::Task<>
+auto Timer::add_delay(utils::BaseIdTask&& task, double delay) -> utils::Task<>
 {
     co_await io_context_->in_thread();
     auto expired_time = TimeSpec::getNow() + delay;

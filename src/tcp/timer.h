@@ -22,22 +22,14 @@ class Timer
   public:
     Timer(IoContext* io_context);
     ~Timer();
-    struct Delay
-    {
-        Timer* timer;
-        double delay;
-        bool await_ready() { return delay <= 0; }
-        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> handle);
-        void await_resume() {}
-    };
-    auto delay(double delay) -> Delay;
+    void start();
+    auto add_delay(utils::BaseIdTask&& task, double delay) -> utils::Task<>;
     // cancel delay
     auto cancel_delay(size_t id) -> utils::Task<>;
     // update before wait
     void update();
 
   private:
-    auto add_task(utils::BaseIdTask task, double delay) -> utils::Task<>;
     auto on_read() -> utils::Task<>;
     int timefd_;
     IoContext* io_context_;

@@ -1,6 +1,7 @@
 #include "iocontext.h"
 #include "epoller.h"
-#include "node.h"
+#include "ionode.h"
+#include "timer.h"
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
@@ -13,17 +14,17 @@
 #include <vector>
 namespace tcp
 {
-IoContext::IoContext() : waker_(this), thread_id_(std::this_thread::get_id()) { waker_.start(); }
+IoContext::IoContext() : waker_(this), timer_(this), thread_id_(std::this_thread::get_id()) {}
 void IoContext::run()
 {
     while (true)
     {
-
+        timer_.update();
         auto nodes = epoller_.poll();
         need_wakeup_ = false;
         for (auto node : nodes)
         {
-            handle_node(static_cast<Node*>(node));
+            handle_node(node);
         }
         std::vector<utils::BaseTask> temp_tasks;
         {
@@ -38,21 +39,21 @@ void IoContext::run()
     }
 }
 
-void IoContext::handle_node(Node* node)
+void IoContext::handle_node(IoNode* IoNode)
 {
     // save read mode but not write mode
-    node->type = node->type & Node::Type::Read;
-    if (node->expired_type && Node::Type::Read)
+    IoNode->type = IoNode->type & IoNode::Type::Read;
+    if (IoNode->expired_type && IoNode::Type::Read)
     {
-        node->read_task.resume();
+        IoNode->read_task.resume();
     }
-    if (node->expired_type && Node::Type::Write)
+    if (IoNode->expired_type && IoNode::Type::Write)
     {
-        node->write_task.resume();
+        IoNode->write_task.resume();
     }
 }
 
-void IoContext::add(Node* node)
+void IoContext::add(IoNode* node)
 {
     auto fd = node->fd;
     assert(fd >= 0);
@@ -61,11 +62,11 @@ void IoContext::add(Node* node)
     epoller_.add(node);
     nodes_.emplace(fd, node);
 }
-void IoContext::remove(Node* node)
+void IoContext::remove(IoNode* IoNode)
 {
-    if (auto it = nodes_.find(node->fd); it != nodes_.end())
+    if (auto it = nodes_.find(IoNode->fd); it != nodes_.end())
     {
-        epoller_.remove(node);
+        epoller_.remove(IoNode);
         nodes_.erase(it);
     }
 }

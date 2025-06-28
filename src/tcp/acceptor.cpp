@@ -5,6 +5,7 @@
 #include "iocontext.h"
 #include "iocontextpool.h"
 #include "socket.h"
+#include "tcp/awaitables.h"
 #include "tcp/connection.h"
 #include "utils/channel.h"
 #include "utils/task.h"
@@ -26,14 +27,14 @@ struct Acceptor::Impl
     };
     static constexpr size_t kMaxAcceptChannelSize = 1024;
     Socket socket_;
-    IoContextPool* io_context_pool_;
     IoContext* io_context_;
+    IoContextPool* io_context_pool_;
     IoNode node_;
     utils::Channel<Socket> accept_channel{kMaxAcceptChannelSize};
     State state = State::Stopped;
-    Impl(std::string_view listen_ip, uint16_t port, IoContextPool* io_context_pool)
+    Impl(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
         : socket_(Socket::createAcceptorSocket({listen_ip, port})), io_context_pool_(io_context_pool),
-          io_context_(io_context_pool->getIoContext()), node_(socket_.fd())
+          io_context_(io_context), node_(socket_.fd())
     {
     }
     // run in queue
@@ -108,10 +109,19 @@ struct Acceptor::Impl
         co_await io_context_->in_thread();
         accept_channel.reset();
     }
+
+    auto delay(double delay) -> Delay
+    {
+        if (delay > 0)
+        {
+        }
+        return Delay{io_context_, delay};
+    }
+    auto cancel_delay(size_t id) -> utils::Task<> { return io_context_->cancel_delay(id); }
 };
 
-Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContextPool* io_context__pool)
-    : impl_(std::make_unique<Impl>(listen_ip, port, io_context__pool))
+Acceptor::Acceptor(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context__pool)
+    : impl_(std::make_unique<Impl>(listen_ip, port, io_context, io_context__pool))
 {
 }
 
@@ -127,6 +137,9 @@ auto Acceptor::stop() -> utils::Task<> { return impl_->stop(); }
 auto Acceptor::async_accept() -> utils::Task<AcceptResult> { return impl_->async_accept(); }
 auto Acceptor::reset_accept() -> utils::Task<> { return impl_->reset_accept(); }
 
+auto Acceptor::delay(double delay) -> Delay { return impl_->delay(delay); }
+
+auto Acceptor::cancel_delay(size_t id) -> utils::Task<> { return impl_->cancel_delay(id); }
 auto Acceptor::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
 } // namespace tcp
