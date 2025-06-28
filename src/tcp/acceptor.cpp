@@ -10,6 +10,7 @@
 #include "utils/channel.h"
 #include "utils/task.h"
 #include "waker.h"
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <iostream>
@@ -36,6 +37,7 @@ struct Acceptor::Impl
         : socket_(Socket::createAcceptorSocket({listen_ip, port})), io_context_pool_(io_context_pool),
           io_context_(io_context), node_(socket_.fd())
     {
+        assert(socket_.fd() != -1);
     }
     // run in queue
     ~Impl() { stop_in_thread(); }
@@ -83,6 +85,7 @@ struct Acceptor::Impl
             return;
         }
         state = State::Stopped;
+        node_.is_closed = true;
         io_context_->remove(&node_);
         // may add ~Impl in queue
         accept_channel.close();
@@ -110,13 +113,7 @@ struct Acceptor::Impl
         accept_channel.reset();
     }
 
-    auto delay(double delay) -> Delay
-    {
-        if (delay > 0)
-        {
-        }
-        return Delay{io_context_, delay};
-    }
+    auto delay(double delay) -> Delay { return Delay{io_context_, delay}; }
     auto cancel_delay(size_t id) -> utils::Task<> { return io_context_->cancel_delay(id); }
 };
 

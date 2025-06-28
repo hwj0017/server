@@ -23,11 +23,8 @@ class Server
     auto new_acceptor(std::string_view listen_ip, uint16_t port) -> std::shared_ptr<Acceptor>;
     auto new_connector(std::string_view server_ip, uint16_t port) -> std::shared_ptr<Connector>;
 
-    auto delay(double delay) -> Delay;
-    auto cancel_delay(size_t id) -> utils::Task<>;
-
   protected:
-    virtual auto serve() -> utils::Task<> = 0;
+    virtual auto serve() -> utils::IdTask<> = 0;
 
   private:
     struct Impl;

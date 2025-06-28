@@ -28,7 +28,11 @@ void Timer::start()
     io_context_->add(&io_node_);
     io_node_.read_task = on_read();
 }
-Timer::~Timer() { ::close(timefd_); }
+Timer::~Timer()
+{
+    io_context_->remove(&io_node_);
+    ::close(timefd_);
+}
 
 auto Timer::on_read() -> utils::Task<>
 {
@@ -39,16 +43,21 @@ auto Timer::on_read() -> utils::Task<>
         // 读出定时器
         uint64_t count = 0;
         ssize_t n = ::read(timefd_, &count, sizeof(count));
-        assert(n != sizeof(count));
+        assert(n == sizeof(count));
+        std::vector<std::unique_ptr<TimerNode>> temp_nodes;
         // 遍历定时器
         for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
         {
+            auto id = (*it)->task_.id();
             it = time_queue_.erase(it);
-            auto it_1 = timer_nodes_.find((*it)->task_.id());
+            auto it_1 = timer_nodes_.find(id);
             assert(it_1 != timer_nodes_.end());
-            auto timer_node = std::move(it_1->second);
+            temp_nodes.emplace_back(std::move(it_1->second));
             timer_nodes_.erase(it_1);
-            timer_node->task_.resume();
+        }
+        for (auto& node : temp_nodes)
+        {
+            node->task_.resume();
         }
     }
 }
@@ -63,7 +72,7 @@ void Timer::update()
         return;
     }
     // 第一个定时器的到期时间
-    TimeSpec earlyExpired = timer_nodes_.begin()->second->expired_time_;
+    TimeSpec earlyExpired = (*time_queue_.begin())->expired_time_;
     // 有更早的定时器事件
     if (earlyExpired != nextExpire_)
     {
@@ -76,13 +85,13 @@ void Timer::update()
         nextExpire_ = earlyExpired;
     }
 }
-auto Timer::add_delay(utils::BaseIdTask&& task, double delay) -> utils::Task<>
+auto Timer::add_delay(utils::BaseIdTask task, double delay) -> utils::Task<>
 {
     co_await io_context_->in_thread();
     auto expired_time = TimeSpec::getNow() + delay;
     auto timer_node = std::make_unique<TimerNode>(std::move(task), expired_time);
     time_queue_.emplace(timer_node.get());
-    timer_nodes_.emplace(task.id(), std::move(timer_node));
+    timer_nodes_.emplace(timer_node->task_.id(), std::move(timer_node));
 }
 
 auto Timer::cancel_delay(size_t id) -> utils::Task<>

@@ -52,7 +52,7 @@ auto Epoller::poll() -> std::vector<IoNode*>
     std::vector<IoNode*> active_nodes(event_count);
     for (int i = 0; i < event_count; ++i)
     {
-        std::cout << "1" << std::endl;
+        // std::cout << "1" << std::endl;
         IoNode* node = static_cast<IoNode*>(events_[i].data.ptr);
         if (node)
         {

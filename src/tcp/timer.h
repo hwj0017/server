@@ -23,7 +23,7 @@ class Timer
     Timer(IoContext* io_context);
     ~Timer();
     void start();
-    auto add_delay(utils::BaseIdTask&& task, double delay) -> utils::Task<>;
+    auto add_delay(utils::BaseIdTask task, double delay) -> utils::Task<>;
     // cancel delay
     auto cancel_delay(size_t id) -> utils::Task<>;
     // update before wait

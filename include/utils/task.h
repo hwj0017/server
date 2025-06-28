@@ -52,14 +52,7 @@ class BaseTask
             handle_.destroy();
         }
     }
-    bool await_ready()
-    {
-        if (done())
-        {
-            return true;
-        }
-        return false;
-    }
+    bool await_ready() { return done(); }
     // 如果执行完，返回true;否则保存协程，返回false;
     template <typename promise_type> void await_suspend(coroutine_handle<promise_type> waiter)
     {
@@ -79,7 +72,9 @@ class BaseTask
         {
             if (continuation_)
             {
-                continuation_->resume();
+                // task may destory the promise
+                auto task = std::move(continuation_);
+                task->resume();
             }
             return std::suspend_always{};
         }
@@ -169,7 +164,7 @@ class BaseIdTask : public BaseTask
     ~BaseIdTask() noexcept = default;
     size_t id() const noexcept { return static_cast<base_id_promise_type&>(handle_.promise()).id; }
 };
-
+inline std::atomic<size_t> BaseIdTask::base_id_promise_type::next_id{0};
 template <typename T = void> class IdTask : public BaseIdTask
 {
   public:

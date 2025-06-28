@@ -14,7 +14,11 @@
 #include <vector>
 namespace tcp
 {
-IoContext::IoContext() : waker_(this), timer_(this), thread_id_(std::this_thread::get_id()) {}
+IoContext::IoContext() : waker_(this), timer_(this), thread_id_(std::this_thread::get_id())
+{
+    waker_.start();
+    timer_.start();
+}
 void IoContext::run()
 {
     while (true)
@@ -39,17 +43,17 @@ void IoContext::run()
     }
 }
 
-void IoContext::handle_node(IoNode* IoNode)
+void IoContext::handle_node(IoNode* node)
 {
     // save read mode but not write mode
-    IoNode->type = IoNode->type & IoNode::Type::Read;
-    if (IoNode->expired_type && IoNode::Type::Read)
+    node->type = node->type & IoNode::Type::Read;
+    if (!node->is_closed && (node->expired_type && IoNode::Type::Read))
     {
-        IoNode->read_task.resume();
+        node->read_task.resume();
     }
-    if (IoNode->expired_type && IoNode::Type::Write)
+    if (!node->is_closed && (node->expired_type && IoNode::Type::Write))
     {
-        IoNode->write_task.resume();
+        node->write_task.resume();
     }
 }
 
