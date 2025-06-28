@@ -80,6 +80,7 @@ auto Socket::send(std::string_view data) -> SendResult
     {
         return {};
     }
+    total_bytes_sent += bytes_sent;
     return {total_bytes_sent};
 }
 
@@ -122,8 +123,11 @@ auto Socket::createConnectorSocket(const InetAddress& server_address) -> Socket
     }
     if (::connect(fd, reinterpret_cast<const sockaddr*>(&server_address.addr_), server_address.addrLen_) < 0)
     {
-        ::close(fd);
-        return Socket(-1, InetAddress());
+        if (errno != EINPROGRESS)
+        {
+            ::close(fd);
+            return Socket(fd, InetAddress());
+        }
     }
     return Socket(fd, server_address);
 }

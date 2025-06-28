@@ -55,7 +55,7 @@ class ChannelBase
         {
             channel_.tasks_3_.push({coro});
         }
-        bool await_resume() { return channel_.is_closed(); }
+        bool await_resume() { return !channel_.is_closed(); }
     };
     struct Full
     {
@@ -66,7 +66,7 @@ class ChannelBase
         {
             channel_.tasks_3_.push({coro});
         }
-        bool await_resume() { return channel_.is_closed(); }
+        bool await_resume() { return !channel_.is_closed(); }
     };
     struct NotEmpty
     {
@@ -77,7 +77,7 @@ class ChannelBase
         {
             channel_.tasks_2_.push({coro});
         }
-        bool await_resume() { return channel_.is_closed(); }
+        bool await_resume() { return !channel_.is_closed(); }
     };
     struct NotFull
     {
@@ -88,7 +88,7 @@ class ChannelBase
         {
             channel_.tasks_2_.push({coro});
         }
-        bool await_resume() { return channel_.is_closed(); }
+        bool await_resume() { return !channel_.is_closed(); }
     };
 
     struct Closed
@@ -231,14 +231,7 @@ template <typename T> class Channel : public ChannelBase
         {
             channel_.tasks_1_.push({coro});
         }
-        bool await_resume()
-        {
-            if (channel_.is_closed())
-            {
-                return false;
-            }
-            return true;
-        }
+        bool await_resume() { return !channel_.is_closed(); }
     };
     void reset()
     {

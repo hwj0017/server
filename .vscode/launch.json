@@ -8,7 +8,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Launch",
-            "program": "${workspaceFolder}/bin/tcpserver",
+            "program": "${workspaceFolder}/bin/vpnserver",
             "args": [],
             "cwd": "${workspaceFolder}"
         }

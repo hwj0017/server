@@ -34,6 +34,7 @@ struct Connector::Impl
     Impl(std::string_view server_ip, uint16_t port, IoContext* io_context_)
         : socket_(Socket::createConnectorSocket({server_ip, port})), io_context_(io_context_), node_(socket_.fd())
     {
+        assert(socket_.fd() >= 0);
     }
     // run in queue
     ~Impl() { stop_in_thread(); }
@@ -44,11 +45,38 @@ struct Connector::Impl
         {
             co_return;
         }
-        state_ = State::Started;
-        node_.type = IoNode::Type::Both;
+        node_.type = IoNode::Type::Write;
         io_context_->add(&node_);
+        node_.write_task = []() -> utils::Task<> { co_await suspend_always{}; }();
+        co_await node_.write_task;
+        if (!is_connected())
+        {
+            io_context_->remove(&node_);
+            co_return;
+        }
+        state_ = State::Started;
+        node_.type = IoNode::Type::Read;
         node_.read_task = start_recv();
         node_.write_task = start_send();
+    }
+
+    auto is_connected() -> bool
+    {
+        // 检查连接状态
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(socket_.fd(), SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+        {
+            perror("getsockopt failed");
+            return false;
+        }
+
+        if (error != 0)
+        {
+            errno = error;
+            return false;
+        }
+        return true; // 连接成功
     }
     auto start_recv() -> utils::Task<>
     {
@@ -72,6 +100,7 @@ struct Connector::Impl
             else
             {
                 stop_in_thread();
+                co_return;
             }
         }
     }
@@ -89,29 +118,20 @@ struct Connector::Impl
                     co_return;
                 }
             }
-            auto res = send_channel_.pop();
-            assert(res.has_value());
-            std::string_view data = res.value();
-            if (auto result = socket_.send(data); result.has_value())
+            auto data = send_channel_.pop();
+            std::string_view data_view = data.value();
+            while (!data_view.empty())
             {
-                data.remove_prefix(result.value());
-            }
-            else
-            {
-                stop_in_thread();
-            }
-            while (!data.empty())
-            {
-                node_.type |= IoNode::Type::Write;
                 io_context_->enable_write(&node_);
                 co_await std::suspend_always{};
-                if (auto result = socket_.send(data); result.has_value())
+                if (auto result = socket_.send(data_view); result.has_value())
                 {
-                    data.remove_prefix(result.value());
+                    data_view.remove_prefix(result.value());
                 }
                 else
                 {
                     stop_in_thread();
+                    co_return;
                 }
             }
         }
@@ -123,6 +143,7 @@ struct Connector::Impl
             return;
         }
         state_ = State::Stopped;
+        node_.is_closed = true;
         io_context_->remove(&node_);
         // may add ~Impl in queue
         recv_channel_.close();
@@ -137,7 +158,28 @@ struct Connector::Impl
     auto async_recv() -> utils::Task<RecvResult> { co_return co_await recv_channel_.async_pop(); }
     auto async_send(std::string_view data) -> utils::Task<SendResult>
     {
-        co_return co_await send_channel_.async_push(std::string(data));
+        // TODO:
+        if (send_channel_.is_empty())
+        {
+            if (auto result = socket_.send(data); result.has_value())
+            {
+                data.remove_prefix(result.value());
+            }
+            else
+            {
+                stop_in_thread();
+                co_return false;
+            }
+        }
+
+        if (data.empty())
+        {
+            co_return true;
+        }
+        else
+        {
+            co_return co_await send_channel_.async_push(std::string(data));
+        }
     }
     // 重置读缓存区
     auto reset_recv() -> utils::Task<>

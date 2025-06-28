@@ -14,8 +14,10 @@ aux_source_directory(./src/tcp src_tcp)
 # aux_source_directory(./src/rpc/services src_rpc_serices)
 # aux_source_directory(./src/utils src_utils)
 
-add_executable(tcpserver ${src_tcp} ${src_utils})
-# add_executable(tcpclient test/tcp/clienttest.cpp)
+add_executable(echoserver ${src_tcp} test/tcp/echoserver.cpp)
+add_executable(tcpclient test/tcp/client.cpp)
+add_executable(vpnserver ${src_tcp} test/tcp/vpn.cpp)
+
 # add_executable(servertest ${src_tcp} src/test/servertest.cpp)
 # add_executable(httpserver ${src_tcp} ${src_http} src/test/httpServerTest.cpp)
 # add_executable(test ${src_tcp} ${src_http} src/test/test.cpp)

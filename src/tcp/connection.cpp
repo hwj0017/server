@@ -76,6 +76,7 @@ struct Connection::Impl
             else
             {
                 stop_in_thread();
+                co_return;
             }
         }
     }
@@ -106,6 +107,7 @@ struct Connection::Impl
                 else
                 {
                     stop_in_thread();
+                    co_return;
                 }
             }
         }
@@ -117,6 +119,7 @@ struct Connection::Impl
             return;
         }
         state_ = State::Stopped;
+        node_.is_closed = true;
         io_context_->remove(&node_);
         // may add ~Impl in queue
         recv_channel_.close();
@@ -144,6 +147,7 @@ struct Connection::Impl
                 co_return false;
             }
         }
+
         if (data.empty())
         {
             co_return true;

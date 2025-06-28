@@ -18,6 +18,7 @@ struct IoNode
     int fd;
     Type type = Type::None;
     Type expired_type = Type::None;
+    bool is_closed = false;
     utils::Task<> read_task;
     utils::Task<> write_task;
     IoNode(int fd) : fd(fd) {}

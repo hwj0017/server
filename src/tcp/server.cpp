@@ -9,18 +9,13 @@ namespace tcp
 {
 struct Server::Impl
 {
-    IoContext io_context_;
     IoContextPool pool_;
     Impl() {};
     ~Impl() = default;
-    void start()
-    {
-        pool_.run();
-        io_context_.run();
-    }
+    void start() { pool_.run(); }
     auto new_acceptor(std::string_view listen_ip, uint16_t port) -> std::shared_ptr<Acceptor>
     {
-        return std::make_shared<Acceptor>(listen_ip, port, &io_context_, &pool_);
+        return std::make_shared<Acceptor>(listen_ip, port, pool_.getIoContext(), &pool_);
     }
     auto new_connector(std::string_view server_ip, uint16_t port) -> std::shared_ptr<Connector>
     {

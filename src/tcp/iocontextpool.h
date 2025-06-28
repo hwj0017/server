@@ -24,6 +24,7 @@ class IoContextPool
 
   private:
     static constexpr size_t IoContextCount = 4;
+    IoContext main_io_context_;
     std::vector<std::unique_ptr<IoContextThread>> threads_;
     std::vector<IoContext*> io_contexts_;
     std::unordered_map<size_t, IoContext*> io_context_map_;

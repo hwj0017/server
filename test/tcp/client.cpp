@@ -9,6 +9,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
+constexpr int BUFFER_SIZE = 100000;
 int main()
 {
     // 创建套接子
@@ -25,7 +26,7 @@ int main()
     while (true)
     {
         std::string str;
-        char buf[128];
+        char buf[BUFFER_SIZE];
         std::cin >> str;
         int readNum = send(sockfd, str.data(), str.size(), 0);
         if (readNum == -1)
@@ -33,13 +34,13 @@ int main()
             break;
         }
         memset(buf, 0, 128);
-        int writeNum = recv(sockfd, buf, 127, 0);
-        if (writeNum == -1)
+
+        int writeNum = recv(sockfd, buf, BUFFER_SIZE, 0);
+        if (writeNum <= 0)
         {
             break;
         }
-        buf[writeNum] = '\0';
-        printf("%s\n", buf);
+        std::cout << writeNum << std::endl;
     }
     close(sockfd);
 
