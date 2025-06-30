@@ -21,7 +21,7 @@ class Connector : public std::enable_shared_from_this<Connector>
     Connector(std::string_view server_ip, uint16_t port, IoContext* io_context);
     Connector(const Connector&) = delete;
     ~Connector();
-    auto start() -> utils::Task<>;
+    auto start() -> utils::Task<bool>;
     auto stop() -> utils::Task<>;
 
     auto async_recv() -> utils::Task<RecvResult>;

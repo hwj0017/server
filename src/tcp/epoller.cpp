@@ -48,7 +48,12 @@ void Epoller::update(IoNode* node)
 
 auto Epoller::poll() -> std::vector<IoNode*>
 {
-    int event_count = ::epoll_wait(epollfd_, events_, kMaxEventNum_, -1);
+    int event_count;
+    do
+    {
+        event_count = ::epoll_wait(epollfd_, events_, kMaxEventNum_, -1);
+    } while (event_count == -1 && errno == EINTR);
+    assert(event_count >= 0);
     std::vector<IoNode*> active_nodes(event_count);
     for (int i = 0; i < event_count; ++i)
     {

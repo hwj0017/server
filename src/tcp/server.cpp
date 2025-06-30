@@ -26,11 +26,7 @@ struct Server::Impl
 Server::Server() : impl_(std::make_unique<Impl>()) {}
 Server::~Server() = default;
 
-void Server::start()
-{
-    serve();
-    impl_->start();
-}
+void Server::start() { impl_->start(); }
 
 auto Server::new_acceptor(std::string_view listen_ip, uint16_t port) -> std::shared_ptr<Acceptor>
 {

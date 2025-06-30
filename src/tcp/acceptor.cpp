@@ -40,7 +40,11 @@ struct Acceptor::Impl
         assert(socket_.fd() != -1);
     }
     // run in queue
-    ~Impl() { stop_in_thread(); }
+    ~Impl()
+    {
+        stop_in_thread();
+        std::cout << "close" << std::endl;
+    }
     auto start() -> utils::Task<>
     {
         co_await io_context_->in_thread();

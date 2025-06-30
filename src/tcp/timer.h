@@ -20,6 +20,7 @@ class IoContext;
 class Timer
 {
   public:
+    using TimeSpec = utils::TimeSpec;
     Timer(IoContext* io_context);
     ~Timer();
     void start();

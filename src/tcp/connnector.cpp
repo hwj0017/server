@@ -38,26 +38,27 @@ struct Connector::Impl
     }
     // run in queue
     ~Impl() { stop_in_thread(); }
-    auto start() -> utils::Task<>
+    auto start() -> utils::Task<bool>
     {
         co_await io_context_->in_thread();
         if (state_ == State::Started)
         {
-            co_return;
+            co_return true;
         }
+        state_ = State::Started;
         node_.type = IoNode::Type::Write;
         io_context_->add(&node_);
         node_.write_task = []() -> utils::Task<> { co_await suspend_always{}; }();
         co_await node_.write_task;
         if (!is_connected())
         {
-            io_context_->remove(&node_);
-            co_return;
+            stop_in_thread();
+            co_return false;
         }
-        state_ = State::Started;
-        node_.type = IoNode::Type::Read;
+        io_context_->enable_read(&node_);
         node_.read_task = start_recv();
         node_.write_task = start_send();
+        co_return true;
     }
 
     auto is_connected() -> bool
@@ -155,9 +156,15 @@ struct Connector::Impl
         co_await io_context_->in_thread();
         stop_in_thread();
     }
-    auto async_recv() -> utils::Task<RecvResult> { co_return co_await recv_channel_.async_pop(); }
+    auto async_recv() -> utils::Task<RecvResult>
+    {
+        co_await io_context_->in_thread();
+
+        co_return co_await recv_channel_.async_pop();
+    }
     auto async_send(std::string_view data) -> utils::Task<SendResult>
     {
+        co_await io_context_->in_thread();
         // TODO:
         if (send_channel_.is_empty())
         {
@@ -201,7 +208,7 @@ Connector::Connector(std::string_view server_ip, uint16_t port, IoContext* io_co
 {
 }
 Connector::~Connector() { delay_destroy(std::move(impl_)); }
-auto Connector::start() -> utils::Task<> { return impl_->start(); }
+auto Connector::start() -> utils::Task<bool> { return impl_->start(); }
 auto Connector::stop() -> utils::Task<> { return impl_->stop(); }
 
 auto Connector::async_recv() -> utils::Task<RecvResult> { return impl_->async_recv(); }
