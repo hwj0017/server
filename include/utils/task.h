@@ -49,6 +49,7 @@ class BaseTask
     {
         if (handle_ && --handle_.promise().count == 0)
         {
+            std::cout << "task destroy" << std::endl;
             handle_.destroy();
         }
     }
