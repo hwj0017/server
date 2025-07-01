@@ -66,10 +66,11 @@ struct Acceptor::Impl
                 io_context_->disable_read(&node_);
                 if (!co_await accept_channel.not_full())
                 {
-                    co_return;
+                    VOID_TASK_ERROR
                 }
                 io_context_->enable_read(&node_);
             }
+            // resume by iocontext
             co_await std::suspend_always{};
             auto client_socket_ = socket_.accept();
             if (client_socket_.has_value())
@@ -79,6 +80,7 @@ struct Acceptor::Impl
             else
             {
                 stop_in_thread();
+                VOID_TASK_ERROR
             }
         }
     }
@@ -104,12 +106,11 @@ struct Acceptor::Impl
     {
         co_await io_context_->in_thread();
         auto client_socket_ = co_await accept_channel.async_pop();
-        if (client_socket_.has_value())
+        if (!client_socket_.has_value())
         {
-            co_return {
-                std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext())};
+            VALUE_TASK_ERROR
         }
-        co_return {};
+        co_return std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext());
     }
     auto reset_accept() -> utils::Task<>
     {

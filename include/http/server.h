@@ -1,12 +1,9 @@
 #pragma once
-#include "http/request.h"
-#include "http/response.h"
-#include <functional>
 #include <memory>
 
 namespace http
 {
-
+// TODO: just get file
 class Server
 {
   public:

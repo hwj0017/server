@@ -1,7 +1,7 @@
 #include "http/server.h"
 #include "context.h"
-#include "http/request.h"
-#include "http/response.h"
+#include "request.h"
+#include "response.h"
 #include "tcp/server.h"
 #include "utils/task.h"
 #include <algorithm>
@@ -33,7 +33,7 @@ struct Server::Impl
     auto serve() -> utils::Task<>
     {
         auto acceptor = tcp_server_.new_acceptor(ip_, port_);
-        acceptor->start();
+        co_await acceptor->start();
         while (true)
         {
             auto connection = co_await acceptor->async_accept();

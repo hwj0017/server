@@ -15,7 +15,7 @@ class IoContextPool;
 class Acceptor : public std::enable_shared_from_this<Acceptor>
 {
   public:
-    using AcceptResult = std::optional<std::shared_ptr<Connection>>;
+    using AcceptResult = std::shared_ptr<Connection>;
     Acceptor(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool);
     Acceptor(const Acceptor&) = delete;
     ~Acceptor();

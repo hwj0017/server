@@ -14,14 +14,13 @@ class IoContext;
 class Connector : public std::enable_shared_from_this<Connector>
 {
   public:
-    using RecvResult = std::optional<std::string>;
-    using SendResult = std::optional<size_t>;
-    using TimeTask = std::function<void()>();
+    using RecvResult = std::string;
+    using SendResult = void;
 
     Connector(std::string_view server_ip, uint16_t port, IoContext* io_context);
     Connector(const Connector&) = delete;
     ~Connector();
-    auto start() -> utils::Task<bool>;
+    auto start() -> utils::Task<>;
     auto stop() -> utils::Task<>;
 
     auto async_recv() -> utils::Task<RecvResult>;

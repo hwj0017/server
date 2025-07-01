@@ -64,7 +64,7 @@ struct Connection::Impl
                 if (!co_await recv_channel_.not_full())
                 {
                     // recv_channel_ close
-                    co_return;
+                    VOID_TASK_ERROR
                 }
                 io_context_->enable_read(&node_);
             }
@@ -76,7 +76,7 @@ struct Connection::Impl
             else
             {
                 stop_in_thread();
-                co_return;
+                VOID_TASK_ERROR
             }
         }
     }
@@ -91,7 +91,7 @@ struct Connection::Impl
                 if (!co_await send_channel_.not_empty())
                 {
                     // send_channel_ close
-                    co_return;
+                    VOID_TASK_ERROR
                 }
             }
             auto data = send_channel_.pop();
@@ -107,7 +107,7 @@ struct Connection::Impl
                 else
                 {
                     stop_in_thread();
-                    co_return;
+                    VOID_TASK_ERROR
                 }
             }
         }
@@ -131,10 +131,18 @@ struct Connection::Impl
         co_await io_context_->in_thread();
         stop_in_thread();
     }
-    auto async_recv() -> utils::Task<RecvResult> { co_return co_await recv_channel_.async_pop(); }
+    auto async_recv() -> utils::Task<RecvResult>
+    {
+        auto recv_res = co_await recv_channel_.async_pop();
+        if (!recv_res.has_value())
+        {
+            VALUE_TASK_ERROR
+            // co_return {};
+        }
+        co_return RecvResult{std::move(recv_res.value())};
+    }
     auto async_send(std::string_view data) -> utils::Task<SendResult>
     {
-        // TODO:
         if (send_channel_.is_empty())
         {
             if (auto result = socket_.send(data); result.has_value())
@@ -144,17 +152,13 @@ struct Connection::Impl
             else
             {
                 stop_in_thread();
-                co_return false;
+                VOID_TASK_ERROR
             }
         }
 
-        if (data.empty())
+        if (!data.empty() && !co_await send_channel_.async_push(std::string(data)))
         {
-            co_return true;
-        }
-        else
-        {
-            co_return co_await send_channel_.async_push(std::string(data));
+            VOID_TASK_ERROR
         }
     }
     // 重置读缓存区

@@ -16,9 +16,8 @@ class Socket;
 class Connection : public std::enable_shared_from_this<Connection>
 {
   public:
-    using RecvResult = std::optional<std::string>;
-    using SendResult = bool;
-    using TimeTask = std::function<void()>();
+    using RecvResult = std::string;
+    using SendResult = void;
     Connection(Socket&& socket, IoContext* io_context);
     Connection(const Connection&) = delete;
     ~Connection();
