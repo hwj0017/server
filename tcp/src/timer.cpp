@@ -1,7 +1,7 @@
 #include "timer.h"
 #include "iocontext.h"
-#include "ionode.h"
 #include "timernode.h"
+#include "utils/log.h"
 #include "utils/task.h"
 #include <cassert>
 #include <coroutine>
@@ -18,46 +18,49 @@ namespace tcp
 {
 
 Timer::Timer(IoContext* io_context)
-    : io_context_(io_context), timefd_(timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)), io_node_(timefd_),
+    : io_context_(io_context), timefd_(timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)),
       nextExpire_(TimeSpec::inValidExpired)
 {
     assert(timefd_ != -1);
 }
 
-void Timer::start()
+auto Timer::start() -> utils::Task<>
 {
-    io_node_.type = IoNode::Type::Read;
-    io_context_->add(&io_node_);
-    io_node_.on_read_ = [this]() { on_read(); };
+    auto in_channel = io_context_->get_in_channel(timefd_);
+    while (true)
+    {
+        if (!co_await in_channel->async_pop())
+        {
+            co_return;
+        }
+        utils::Logger::logger << "timer" + std::to_string(timefd_) + "\n";
+
+        auto now = TimeSpec::getNow();
+        // 读出定时器
+        uint64_t count = 0;
+        ssize_t n = ::read(timefd_, &count, sizeof(count));
+        assert(n == sizeof(count));
+        std::vector<std::unique_ptr<TimerNode>> temp_nodes;
+        // 遍历定时器
+        for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
+        {
+            auto id = (*it)->task_.id();
+            it = time_queue_.erase(it);
+            auto it_1 = timer_nodes_.find(id);
+            assert(it_1 != timer_nodes_.end());
+            temp_nodes.emplace_back(std::move(it_1->second));
+            timer_nodes_.erase(it_1);
+        }
+        for (auto& node : temp_nodes)
+        {
+            node->task_.resume();
+        }
+    }
 }
 Timer::~Timer()
 {
-    io_context_->remove(&io_node_);
+    io_context_->remove(timefd_);
     ::close(timefd_);
-}
-
-void Timer::on_read()
-{
-    auto now = TimeSpec::getNow();
-    // 读出定时器
-    uint64_t count = 0;
-    ssize_t n = ::read(timefd_, &count, sizeof(count));
-    assert(n == sizeof(count));
-    std::vector<std::unique_ptr<TimerNode>> temp_nodes;
-    // 遍历定时器
-    for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
-    {
-        auto id = (*it)->task_.id();
-        it = time_queue_.erase(it);
-        auto it_1 = timer_nodes_.find(id);
-        assert(it_1 != timer_nodes_.end());
-        temp_nodes.emplace_back(std::move(it_1->second));
-        timer_nodes_.erase(it_1);
-    }
-    for (auto& node : temp_nodes)
-    {
-        node->task_.resume();
-    }
 }
 
 // 统一在事件处理完调用

@@ -1,6 +1,5 @@
 #include "iocontext.h"
 #include "epoller.h"
-#include "ionode.h"
 #include "timer.h"
 #include "utils/channel.h"
 #include "utils/task.h"
@@ -11,6 +10,7 @@
 #include <mutex>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace tcp
@@ -30,7 +30,7 @@ void IoContext::run()
         need_wakeup_ = false;
         for (auto node : nodes)
         {
-            handle_node(node);
+            handle_node(static_cast<IoNode*>(node));
         }
         std::vector<utils::BaseTask> temp_tasks;
         {
@@ -47,33 +47,71 @@ void IoContext::run()
 
 void IoContext::handle_node(IoNode* node)
 {
-    // save read mode but not write mode
-    node->type = node->type & IoNode::Type::Read;
-    if (!node->is_closed && (node->expired_type && IoNode::Type::Read))
+    if (node->expired_type && IoNode::Type::Read)
     {
-        node->on_read_();
+        node->in_channel_.push();
     }
-    if (!node->is_closed && (node->expired_type && IoNode::Type::Write))
+    if (node->expired_type && IoNode::Type::Write)
     {
-        node->on_write_();
+        node->out_channel_.push();
     }
 }
 
-void IoContext::add(IoNode* node)
+auto IoContext::get_in_channel(int fd) -> utils::Channel<>*
 {
-    auto fd = node->fd;
     assert(fd >= 0);
-    auto it = nodes_.find(fd);
-    assert(it == nodes_.end());
-    epoller_.add(node);
-    nodes_.emplace(fd, node);
-}
-void IoContext::remove(IoNode* IoNode)
-{
-    if (auto it = nodes_.find(IoNode->fd); it != nodes_.end())
+    utils::Channel<>* channel = nullptr;
+    auto it = io_nodes_.find(fd);
+    if (it == io_nodes_.end())
     {
-        epoller_.remove(IoNode);
-        nodes_.erase(it);
+        auto io_node = std::make_unique<IoNode>(fd);
+        io_node->type = IoNode::Type::Read;
+        channel = &io_node->in_channel_;
+        epoller_.add(io_node.get());
+        io_nodes_.emplace(fd, std::move(io_node));
+    }
+    else
+    {
+        channel = &it->second->in_channel_;
+        if (!(it->second->type && Node::Type::Read))
+        {
+            it->second->type |= IoNode::Type::Read;
+            epoller_.update(it->second.get());
+        }
+    }
+    return channel;
+}
+auto IoContext::get_out_channel(int fd) -> utils::Channel<>*
+{
+    assert(fd >= 0);
+    utils::Channel<>* channel = nullptr;
+    auto it = io_nodes_.find(fd);
+    if (it == io_nodes_.end())
+    {
+        auto io_node = std::make_unique<IoNode>(fd);
+        io_node->type = IoNode::Type::Write;
+        channel = &io_node->out_channel_;
+        epoller_.add(io_node.get());
+        io_nodes_.emplace(fd, std::move(io_node));
+    }
+    else
+    {
+        channel = &it->second->out_channel_;
+        if (!(it->second->type && IoNode::Type::Write))
+        {
+            it->second->type |= IoNode::Type::Write;
+            epoller_.update(it->second.get());
+        }
+    }
+    return channel;
+}
+
+void IoContext::remove(int fd)
+{
+    if (auto it = io_nodes_.find(fd); it != io_nodes_.end())
+    {
+        epoller_.remove(it->second.get());
+        io_nodes_.erase(it);
     }
 }
 } // namespace tcp

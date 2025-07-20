@@ -1,5 +1,6 @@
 #include "waker.h"
 #include "iocontext.h"
+#include "utils/log.h"
 #include "utils/task.h"
 #include <algorithm>
 #include <coroutine>
@@ -9,7 +10,7 @@
 namespace tcp
 {
 
-Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)), io_context_(io_context), node_(fd_)
+Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)), io_context_(io_context)
 {
     if (fd_ < 0)
     {
@@ -18,26 +19,30 @@ Waker::Waker(IoContext* io_context) : fd_(::eventfd(0, EFD_NONBLOCK | EFD_CLOEXE
 }
 Waker::~Waker()
 {
-    io_context_->remove(&node_);
+    io_context_->remove(fd_);
     if (fd_ >= 0)
     {
         ::close(fd_);
     }
 }
 
-void Waker::start()
+auto Waker::start() -> utils::Task<>
 {
-    node_.type = IoNode::Type::Read;
-    io_context_->add(&node_);
-    node_.on_read_ = [this]() { on_read(); };
-}
-void Waker::on_read()
-{
-    uint64_t value = 1;
-    ssize_t n = ::read(fd_, &value, sizeof(value));
-    if (n != sizeof(value))
+    auto in_channel = io_context_->get_in_channel(fd_);
+    while (true)
     {
-        throw std::runtime_error("Failed to read to waker");
+        if (!co_await in_channel->async_pop())
+        {
+            co_return;
+        }
+        utils::Logger::logger << "weaker" + std::to_string(fd_) + "\n";
+
+        uint64_t value = 1;
+        ssize_t n = ::read(fd_, &value, sizeof(value));
+        if (n != sizeof(value))
+        {
+            throw std::runtime_error("Failed to read to waker");
+        }
     }
 }
 

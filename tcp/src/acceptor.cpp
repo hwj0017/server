@@ -7,6 +7,7 @@
 #include "socket.h"
 #include "tcp/connection.h"
 #include "utils/channel.h"
+#include "utils/log.h"
 #include "utils/task.h"
 #include "waker.h"
 #include <cassert>
@@ -16,6 +17,7 @@
 #include <memory>
 #include <ostream>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace tcp
@@ -32,13 +34,12 @@ struct Acceptor::Impl
     Socket socket_;
     IoContext* io_context_;
     IoContextPool* io_context_pool_;
-    IoNode node_;
-    utils::Channel<std::span<std::shared_ptr<Connection>>> accept_channel_{1};
+    utils::Channel<std::span<std::shared_ptr<Connection>>> accept_channel_{0};
     std::vector<std::shared_ptr<Connection>> accept_buffer_{};
     State state = State::Stopped;
     Impl(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
         : socket_(Socket::createAcceptorSocket({listen_ip, port})), io_context_pool_(io_context_pool),
-          io_context_(io_context), node_(socket_.fd())
+          io_context_(io_context)
     {
         assert(socket_.fd() != -1);
         accept_buffer_.reserve(InitialAcceptBufferSize);
@@ -57,32 +58,38 @@ struct Acceptor::Impl
             co_return;
         }
         state = State::Started;
-        node_.type = IoNode::Type::None;
-        io_context_->add(&node_);
-        node_.on_read_ = [this]() { on_read(); };
+        start_accept();
     }
-    void on_read()
+    auto start_accept() -> utils::Task<>
     {
-        accept_buffer_.reserve(InitialAcceptBufferSize);
+        auto in_channel = io_context_->get_in_channel(socket_.fd());
         while (true)
         {
-            auto client_socket_ = socket_.accept();
-            if (!client_socket_.has_value())
+            if (!co_await accept_channel_.not_full() || !co_await in_channel->async_pop())
             {
-                stop_in_thread();
-                return;
+                co_return;
             }
-            if (client_socket_->fd() == -1)
+            utils::Logger::logger << "accept" + std::to_string(socket_.fd()) + "\n";
+            while (true)
             {
-                if (accept_buffer_.size() > 0)
+                auto client_socket_ = socket_.accept();
+                if (!client_socket_.has_value())
                 {
-                    accept_channel_.push({accept_buffer_});
-                    accept_buffer_.clear();
+                    stop_in_thread();
+                    VOID_TASK_ERROR
                 }
-                return;
+                if (client_socket_->fd() == -1)
+                {
+                    if (accept_buffer_.size() > 0)
+                    {
+                        accept_channel_.push({accept_buffer_});
+                        accept_buffer_.clear();
+                    }
+                    break;
+                }
+                accept_buffer_.emplace_back(
+                    std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext()));
             }
-            accept_buffer_.emplace_back(
-                std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext()));
         }
     }
     void stop_in_thread()
@@ -94,7 +101,7 @@ struct Acceptor::Impl
         state = State::Stopped;
         // may add ~Impl in queue
         accept_channel_.close();
-        io_context_->remove(&node_);
+        io_context_->remove(socket_.fd());
     }
     auto stop() -> utils::Task<>
     {
@@ -102,19 +109,7 @@ struct Acceptor::Impl
         stop_in_thread();
     }
 
-    auto async_accept_local() -> utils::Channel<AcceptResult>::AsyncPop
-    {
-        // not read
-        if (!(node_.type && IoNode::Type::Read))
-        {
-            on_read();
-            if (accept_channel_.is_empty())
-            {
-                io_context_->enable_read(&node_);
-            }
-        }
-        return accept_channel_.async_pop();
-    }
+    auto async_accept_local() -> utils::Channel<AcceptResult>::AsyncPop { return accept_channel_.async_pop(); }
     auto async_accept() -> utils::Task<AcceptResult>
     {
         co_await io_context_->in_thread();

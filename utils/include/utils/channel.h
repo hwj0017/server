@@ -12,6 +12,7 @@ namespace utils
 {
 // not thread safe
 // class ChannelBase;
+// TODO
 class ChannelBase
 {
   public:
@@ -29,27 +30,25 @@ class ChannelBase
             return;
         }
         is_closed_ = true;
-        while (!tasks_1_.empty())
+        while (!res_tasks_.empty())
         {
-            auto task = std::move(tasks_1_.front());
-            tasks_1_.pop();
+            auto task = std::move(res_tasks_.front());
+            res_tasks_.pop();
             task.resume();
         }
-        while (!tasks_2_.empty())
+        while (!empty_tasks_.empty())
         {
-            auto task = std::move(tasks_2_.front());
-            tasks_2_.pop();
+            auto task = std::move(empty_tasks_.front());
+            empty_tasks_.pop();
             task.resume();
         }
-        while (!tasks_3_.empty())
+        while (!full_tasks_.empty())
         {
-            auto task = std::move(tasks_3_.front());
-            tasks_3_.pop();
+            auto task = std::move(full_tasks_.front());
+            full_tasks_.pop();
             task.resume();
         }
     }
-
-    // bool has_pop_task() const { return is_empty() && !tasks_1_.empty(); }
 
     struct Empty
     {
@@ -58,20 +57,9 @@ class ChannelBase
         bool await_ready() { return channel_.is_closed() || channel_.is_empty(); }
         template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_3_.push({coro});
+            channel_.empty_tasks_.push({coro});
         }
-        bool await_resume() { return !channel_.is_closed(); }
-    };
-    struct Full
-    {
-        ChannelBase& channel_;
-        Full(ChannelBase& channel) : channel_(channel) {}
-        bool await_ready() { return channel_.is_closed() || channel_.is_full(); }
-        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
-        {
-            channel_.tasks_3_.push({coro});
-        }
-        bool await_resume() { return !channel_.is_closed(); }
+        bool await_resume() { return channel_.is_empty(); }
     };
     struct NotEmpty
     {
@@ -80,10 +68,22 @@ class ChannelBase
         bool await_ready() { return channel_.is_closed() || !channel_.is_empty(); }
         template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_2_.push({coro});
+            channel_.empty_tasks_.push({coro});
         }
-        bool await_resume() { return !channel_.is_closed(); }
+        bool await_resume() { return !channel_.is_empty(); }
     };
+    struct Full
+    {
+        ChannelBase& channel_;
+        Full(ChannelBase& channel) : channel_(channel) {}
+        bool await_ready() { return channel_.is_closed() || channel_.is_full(); }
+        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
+        {
+            channel_.full_tasks_.push({coro});
+        }
+        bool await_resume() { return channel_.is_full(); }
+    };
+
     struct NotFull
     {
         ChannelBase& channel_;
@@ -91,21 +91,9 @@ class ChannelBase
         bool await_ready() { return channel_.is_closed() || !channel_.is_full(); }
         template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_2_.push({coro});
+            channel_.full_tasks_.push({coro});
         }
-        bool await_resume() { return !channel_.is_closed(); }
-    };
-
-    struct Closed
-    {
-        ChannelBase& channel_;
-        Closed(ChannelBase& channel) : channel_(channel) {}
-        bool await_ready() { return channel_.is_closed(); }
-        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
-        {
-            channel_.tasks_4_.push({coro});
-        }
-        void await_resume() {}
+        bool await_resume() { return !channel_.is_full(); }
     };
 
     // await empty, full, not_empty, not_full, closed, pushable, popable
@@ -113,24 +101,17 @@ class ChannelBase
     auto full() -> Full { return {*this}; }
     auto not_empty() -> NotEmpty { return {*this}; }
     auto not_full() -> NotFull { return {*this}; }
-    auto closed() -> Closed { return {*this}; }
 
   public:
     int full_size_;
     int empty_size_;
     bool is_closed_ = false;
     // await pop or push
-    std::queue<BaseTask> tasks_1_;
-    // await not empty or not full
-    std::queue<BaseTask> tasks_2_;
-    // await empty or full
-    std::queue<BaseTask> tasks_3_;
-    // await closed
-    std::queue<BaseTask> tasks_4_;
-    friend struct Empty;
-    friend struct Full;
-    friend struct NotEmpty;
-    friend struct NotFull;
+    std::queue<BaseTask> res_tasks_;
+    // await empty or not empty
+    std::queue<BaseTask> empty_tasks_;
+    // await full or not full
+    std::queue<BaseTask> full_tasks_;
 };
 
 // channel<T> is a bounded channel that can hold T type elements.
@@ -138,57 +119,56 @@ template <typename T = void> class Channel : public ChannelBase
 {
   public:
     Channel(size_t max_size) : ChannelBase(max_size, 0) {}
+    // TODO
     struct AsyncPop
     {
         Channel<T>& channel_;
         AsyncPop(Channel<T>& channel) : channel_(channel) {}
-        bool await_ready()
-        {
-            auto ret = channel_.is_closed() || !channel_.is_empty();
-            // increment empty size and decrement full size
-            ++channel_.empty_size_;
-            --channel_.full_size_;
-            // resume Push
-            if (channel_.is_full())
-            {
-                auto task = std::move(channel_.tasks_1_.front());
-                channel_.tasks_1_.pop();
-                task.resume();
-            }
-            // resume NotFull
-            if (!channel_.is_full())
-            {
-                while (!channel_.tasks_2_.empty())
-                {
-                    auto task = std::move(channel_.tasks_2_.front());
-                    channel_.tasks_2_.pop();
-                    task.resume();
-                }
-            }
-            // resume Empty
-            if (channel_.is_empty())
-            {
-                while (!channel_.tasks_3_.empty())
-                {
-                    auto task = std::move(channel_.tasks_3_.front());
-                    channel_.tasks_3_.pop();
-                    task.resume();
-                }
-            };
-            return ret;
-        }
+        bool await_ready() { return await_ready(channel_); }
         template <typename promiss_type> void await_suspend(std::coroutine_handle<promiss_type> coro)
         {
-            channel_.tasks_1_.push({coro});
+            channel_.res_tasks_.push({coro});
         }
-        auto await_resume() -> std::optional<T>
+        auto await_resume() -> std::optional<T> { return await_resume(channel_); }
+        static bool await_ready(Channel<T>& channel)
         {
-            if (channel_.is_closed())
+            // increment empty size and decrement full size
+            ++channel.empty_size_;
+            --channel.full_size_;
+            if (!channel.is_closed())
+            { // resume Push
+                if (channel.is_full() && !channel.res_tasks_.empty())
+                {
+                    auto task = std::move(channel.res_tasks_.front());
+                    channel.res_tasks_.pop();
+                    task.resume();
+                }
+                while (channel.is_empty() && !channel.empty_tasks_.empty())
+                {
+                    auto task = std::move(channel.empty_tasks_.front());
+                    channel.empty_tasks_.pop();
+                    task.resume();
+                }
+                while (!channel.is_full() && !channel.full_tasks_.empty())
+                {
+                    auto task = std::move(channel.full_tasks_.front());
+                    channel.full_tasks_.pop();
+                    task.resume();
+                }
+            }
+
+            return channel.is_closed() || channel.full_size_ >= 0;
+        }
+        static auto await_resume(Channel<T>& channel) -> std::optional<T>
+        {
+            if (channel.full_size_ < 0)
             {
+                --channel.empty_size_;
+                ++channel.full_size_;
                 return {};
             }
-            auto res = std::move(channel_.resources_.front());
-            channel_.resources_.pop();
+            auto res = std::move(channel.resources_.front());
+            channel.resources_.pop();
             return res;
         }
     };
@@ -197,125 +177,63 @@ template <typename T = void> class Channel : public ChannelBase
         Channel<T>& channel_;
         T value_;
         AsyncPush(Channel<T>& channel, T&& value) : channel_(channel), value_(std::move(value)) {}
-        bool await_ready()
-        {
-            auto ret = channel_.is_closed() || !channel_.is_full();
-            --channel_.empty_size_;
-            ++channel_.full_size_;
-            channel_.resources_.push(std::move(value_));
-            // resume Pop
-            if (channel_.is_empty())
-            {
-                auto task = std::move(channel_.tasks_1_.front());
-                channel_.tasks_1_.pop();
-                task.resume();
-            }
-            // resume NotEmpty
-            if (!channel_.is_empty())
-            {
-                while (!channel_.tasks_2_.empty())
-                {
-                    auto task = std::move(channel_.tasks_2_.front());
-                    channel_.tasks_2_.pop();
-                    task.resume();
-                }
-            }
-            // resume Full
-            if (channel_.is_full())
-            {
-                while (!channel_.tasks_3_.empty())
-                {
-                    auto task = std::move(channel_.tasks_3_.front());
-                    channel_.tasks_3_.pop();
-                    task.resume();
-                }
-            }
-            return ret;
-        }
+
+        bool await_ready() { return await_ready(channel_, std::move(value_)); }
+
         template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_1_.push({coro});
+            channel_.res_tasks_.push({coro});
         }
-        bool await_resume() { return !channel_.is_closed(); }
-    };
-    void reset()
-    {
-        close();
-        resources_ = {};
-        is_closed_ = false;
-    }
-    // auto push(T value) -> Push { return Push{*this, std::move(value)}; }
-    // auto pop() -> Pop { return Pop{*this}; }
-    bool push(T value)
-    {
-        if (is_closed() || is_full())
+        bool await_resume() { return await_resume(channel_); }
+        static bool await_ready(Channel<T>& channel, T&& value)
         {
-            return false;
-        }
-        --empty_size_;
-        ++full_size_;
-        resources_.push(std::move(value));
-
-        if (is_empty())
-        {
-            // resume Pop
-            auto task = std::move(tasks_1_.front());
-            tasks_1_.pop();
-            task.resume();
-        }
-        else
-        {
-            // resume NotEmpty
-            while (!tasks_2_.empty())
-            {
-                auto task = std::move(tasks_2_.front());
-                tasks_2_.pop();
-                task.resume();
-            }
-            // resume Full
-            if (is_full())
-            {
-                while (!tasks_3_.empty())
+            --channel.empty_size_;
+            ++channel.full_size_;
+            channel.resources_.push(std::move(value));
+            if (!channel.is_closed())
+            { // resume Pop
+                if (channel.is_empty() && !channel.res_tasks_.empty())
                 {
-                    auto task = std::move(tasks_3_.front());
-                    tasks_3_.pop();
+                    auto task = std::move(channel.res_tasks_.front());
+                    channel.res_tasks_.pop();
+                    task.resume();
+                }
+                while (channel.is_full() && !channel.full_tasks_.empty())
+                {
+                    auto task = std::move(channel.full_tasks_.front());
+                    channel.full_tasks_.pop();
+                    task.resume();
+                }
+                while (!channel.is_empty() && !channel.empty_tasks_.empty())
+                {
+                    auto task = std::move(channel.empty_tasks_.front());
+                    channel.empty_tasks_.pop();
                     task.resume();
                 }
             }
+            return channel.is_closed() || channel.empty_size_ >= 0;
         }
-        return true;
-    }
-
+        static bool await_resume(Channel<T>& channel)
+        {
+            if (channel.empty_size_ < 0)
+            {
+                ++channel.empty_size_;
+                --channel.full_size_;
+                return false;
+            }
+            return true;
+        }
+    };
     auto pop() -> std::optional<T>
     {
-        if (is_closed() || is_empty())
-        {
-            return std::nullopt;
-        }
-        ++empty_size_;
-        --full_size_;
+        AsyncPop::await_ready(*this);
+        return AsyncPop::await_resume(*this);
+    }
 
-        auto res = std::move(resources_.front());
-        resources_.pop();
-        // resume NotFull
-        if (!is_full())
-        {
-            while (!tasks_2_.empty())
-
-            {
-                auto task = std::move(tasks_2_.front());
-                tasks_2_.pop();
-                task.resume();
-            }
-        }
-        // resume Push
-        if (empty_size_ < 0 && !tasks_1_.empty())
-        {
-            auto task = std::move(tasks_1_.front());
-            tasks_1_.pop();
-            task.resume();
-        }
-        return {res};
+    bool push(T value)
+    {
+        AsyncPush::await_ready(*this, std::move(value));
+        return AsyncPush::await_resume(*this);
     }
 
     auto async_pop() -> AsyncPop { return AsyncPop{*this}; }
@@ -323,205 +241,127 @@ template <typename T = void> class Channel : public ChannelBase
 
   private:
     std::queue<T> resources_;
-
-    friend struct Pop;
-    friend struct Push;
+    friend struct AsyncPop;
+    friend struct AsyncPush;
 };
 template <> class Channel<void> : public ChannelBase
 {
   public:
     Channel(size_t max_size, size_t init_size = 0) : ChannelBase(max_size, init_size) {}
-    bool push()
-    {
-
-        if (is_closed() || is_full())
-        {
-            return false;
-        }
-        --empty_size_;
-        ++full_size_;
-
-        if (is_empty())
-        {
-            auto task = std::move(tasks_1_.front());
-            tasks_1_.pop();
-            task.resume();
-        }
-        else
-        {
-            // resume NotEmpty
-            while (!tasks_2_.empty())
-            {
-                auto task = std::move(tasks_2_.front());
-                tasks_2_.pop();
-                task.resume();
-            }
-            // resume Full
-            if (is_full())
-            {
-                while (!tasks_3_.empty())
-                {
-                    auto task = std::move(tasks_3_.front());
-                    tasks_3_.pop();
-                    task.resume();
-                }
-            }
-        }
-        return true;
-    }
-
-    auto pop() -> bool
-    {
-        if (is_closed() || is_empty())
-        {
-
-            return false;
-        }
-        ++empty_size_;
-        --full_size_;
-        if (is_full())
-        {
-            // resume Push
-            auto task = std::move(tasks_1_.front());
-            tasks_1_.pop();
-            task.resume();
-        }
-        else
-        {
-            // resume NotFull
-            while (!tasks_2_.empty())
-            {
-                auto task = std::move(tasks_2_.front());
-                tasks_2_.pop();
-                task.resume();
-            }
-            if (is_empty())
-            {
-                // resume Empty
-                while (!tasks_3_.empty())
-                {
-                    auto task = std::move(tasks_3_.front());
-                    tasks_3_.pop();
-                    task.resume();
-                }
-            }
-        }
-        return true;
-    }
-
     struct AsyncPop
     {
-        Channel& channel_;
-        AsyncPop(Channel& channel) : channel_(channel) {}
-        bool await_ready()
+        Channel<>& channel_;
+        AsyncPop(Channel<>& channel) : channel_(channel) {}
+        bool await_ready() { return await_ready(channel_); }
+        template <typename promiss_type> void await_suspend(std::coroutine_handle<promiss_type> coro)
         {
-            auto ret = channel_.is_closed() || !channel_.is_empty();
-            ++channel_.empty_size_;
-            --channel_.full_size_;
-            // resume Push
-            if (channel_.is_full())
-            {
-                auto task = std::move(channel_.tasks_1_.front());
-                channel_.tasks_1_.pop();
-                task.resume();
-            }
-            // resume NotFull
-            if (!channel_.is_full())
-            {
-                while (!channel_.tasks_2_.empty())
+            channel_.res_tasks_.push({coro});
+        }
+        auto await_resume() -> bool { return await_resume(channel_); }
+        static bool await_ready(Channel<>& channel)
+        {
+            // increment empty size and decrement full size
+            ++channel.empty_size_;
+            --channel.full_size_;
+            if (!channel.is_closed())
+            { // resume Push
+                if (channel.is_full() && !channel.res_tasks_.empty())
                 {
-                    auto task = std::move(channel_.tasks_2_.front());
-                    channel_.tasks_2_.pop();
+                    auto task = std::move(channel.res_tasks_.front());
+                    channel.res_tasks_.pop();
                     task.resume();
                 }
-            }
-            // resume Empty
-            if (channel_.is_empty())
-            {
-                while (!channel_.tasks_3_.empty())
+                while (channel.is_empty() && !channel.empty_tasks_.empty())
                 {
-                    auto task = std::move(channel_.tasks_3_.front());
-                    channel_.tasks_3_.pop();
+                    auto task = std::move(channel.empty_tasks_.front());
+                    channel.empty_tasks_.pop();
                     task.resume();
                 }
-            }
-            return ret;
-        }
-        template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
-        {
-            channel_.tasks_1_.push({coro});
-        }
-        bool await_resume()
-        {
-            if (channel_.is_closed())
-            {
-                return false;
+                while (!channel.is_full() && !channel.full_tasks_.empty())
+                {
+                    auto task = std::move(channel.full_tasks_.front());
+                    channel.full_tasks_.pop();
+                    task.resume();
+                }
             }
 
+            return channel.is_closed() || channel.full_size_ >= 0;
+        }
+        static auto await_resume(Channel<>& channel) -> bool
+        {
+            if (channel.full_size_ < 0)
+            {
+                --channel.empty_size_;
+                ++channel.full_size_;
+                return false;
+            }
             return true;
         }
     };
     struct AsyncPush
     {
-        Channel& channel_;
-        AsyncPush(Channel& channel) : channel_(channel) {}
-        bool await_ready()
-        {
-            auto ret = channel_.is_closed() || !channel_.is_full();
-            --channel_.empty_size_;
-            ++channel_.full_size_;
-            // resume Pop
-            if (channel_.is_empty())
-            {
-                auto task = std::move(channel_.tasks_1_.front());
-                channel_.tasks_1_.pop();
-                task.resume();
-            }
-            // resume NotEmpty
-            if (!channel_.is_empty())
-            {
-                while (!channel_.tasks_2_.empty())
-                {
-                    auto task = std::move(channel_.tasks_2_.front());
-                    channel_.tasks_2_.pop();
-                    task.resume();
-                }
-            }
-            // resume Full
-            if (channel_.is_full())
-            {
-                while (!channel_.tasks_3_.empty())
-                {
-                    auto task = std::move(channel_.tasks_3_.front());
-                    channel_.tasks_3_.pop();
-                    task.resume();
-                }
-            }
-            return ret;
-        }
+        Channel<>& channel_;
+        AsyncPush(Channel<>& channel) : channel_(channel) {}
+
+        bool await_ready() { return await_ready(channel_); }
+
         template <typename promise_type> void await_suspend(std::coroutine_handle<promise_type> coro)
         {
-            channel_.tasks_1_.push({coro});
+            channel_.res_tasks_.push({coro});
         }
-        bool await_resume()
+        bool await_resume() { return await_resume(channel_); }
+        static bool await_ready(Channel<>& channel)
         {
-            if (channel_.is_closed())
+            --channel.empty_size_;
+            ++channel.full_size_;
+            if (!channel.is_closed())
+            { // resume Pop
+                if (channel.is_empty() && !channel.res_tasks_.empty())
+                {
+                    auto task = std::move(channel.res_tasks_.front());
+                    channel.res_tasks_.pop();
+                    task.resume();
+                }
+                while (channel.is_full() && !channel.full_tasks_.empty())
+                {
+                    auto task = std::move(channel.full_tasks_.front());
+                    channel.full_tasks_.pop();
+                    task.resume();
+                }
+                while (!channel.is_empty() && !channel.empty_tasks_.empty())
+                {
+                    auto task = std::move(channel.empty_tasks_.front());
+                    channel.empty_tasks_.pop();
+                    task.resume();
+                }
+            }
+            return channel.is_closed() || channel.empty_size_ >= 0;
+        }
+        static bool await_resume(Channel<>& channel)
+        {
+            if (channel.empty_size_ < 0)
             {
+                ++channel.empty_size_;
+                --channel.full_size_;
                 return false;
             }
-
             return true;
         }
     };
-    auto async_pop() -> AsyncPop { return AsyncPop{*this}; }
-    auto async_push() -> AsyncPush { return AsyncPush{*this}; }
-    void reset()
+    auto pop() -> bool
     {
-        close();
-        is_closed_ = false;
+        AsyncPop::await_ready(*this);
+        return AsyncPop::await_resume(*this);
     }
 
-    friend struct Pop;
-    friend struct Push;
+    bool push()
+    {
+        AsyncPush::await_ready(*this);
+        return AsyncPush::await_resume(*this);
+    }
+    auto async_pop() -> AsyncPop { return AsyncPop{*this}; }
+    auto async_push() -> AsyncPush { return AsyncPush{*this}; }
+    friend struct AsyncPop;
+    friend struct AsyncPush;
 };
 } // namespace utils

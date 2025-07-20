@@ -45,13 +45,13 @@ auto Socket::accept() -> AcceptResult
 {
     InetAddress address;
     auto fd = ::accept(fd_, reinterpret_cast<sockaddr*>(&address.addr_), &address.addrLen_);
-    if (fd < 0)
+    if (fd <= 0)
     {
-        if (errno != EAGAIN && errno != EWOULDBLOCK)
+        if (fd == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
         {
-            return {};
+            return Socket(-1, address);
         }
-        return Socket(-1, address);
+        return {};
     }
     utils::Logger::logger << "connection fd " + std::to_string(fd) + "\n";
     return {createConnecionSocket(fd, address)};
@@ -66,15 +66,15 @@ auto Socket::recv(std::vector<char>& data) -> RecvResult
         auto bytes_received = ::recv(fd_, data.data() + current_size, kRecvBufferSize, 0);
         if (bytes_received <= 0)
         {
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
+            if (bytes_received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
             {
                 data.resize(current_size);
-                return {};
+                return {current_size};
             }
             else
             {
                 data.resize(current_size);
-                return {current_size};
+                return {};
             }
         }
         if (bytes_received < kRecvBufferSize)
@@ -90,13 +90,13 @@ auto Socket::send(std::span<char> data) -> SendResult
     auto bytes_sent = ::send(fd_, data.data(), data.size(), 0);
     if (bytes_sent <= 0)
     {
-        if (errno != EAGAIN && errno != EWOULDBLOCK)
+        if (bytes_sent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
         {
-            return {};
+            return {0};
         }
         else
         {
-            return {0};
+            return {};
         }
     }
     return {bytes_sent};

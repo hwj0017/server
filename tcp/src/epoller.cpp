@@ -23,7 +23,7 @@ Epoller::~Epoller()
     }
 }
 
-void Epoller::add(IoNode* node)
+void Epoller::add(Node* node)
 {
     epoll_event event;
     event.data.ptr = node;
@@ -32,9 +32,9 @@ void Epoller::add(IoNode* node)
     ::epoll_ctl(epollfd_, EPOLL_CTL_ADD, node->fd, &event);
 }
 
-void Epoller::remove(IoNode* node) { ::epoll_ctl(epollfd_, EPOLL_CTL_DEL, node->fd, nullptr); }
+void Epoller::remove(Node* node) { ::epoll_ctl(epollfd_, EPOLL_CTL_DEL, node->fd, nullptr); }
 
-void Epoller::update(IoNode* node)
+void Epoller::update(Node* node)
 {
     epoll_event event;
     event.data.ptr = node;
@@ -46,7 +46,7 @@ void Epoller::update(IoNode* node)
     }
 }
 
-auto Epoller::poll() -> std::vector<IoNode*>
+auto Epoller::poll() -> std::vector<Node*>
 {
     int event_count;
     do
@@ -54,11 +54,11 @@ auto Epoller::poll() -> std::vector<IoNode*>
         event_count = ::epoll_wait(epollfd_, events_, kMaxEventNum_, -1);
     } while (event_count == -1 && errno == EINTR);
     assert(event_count >= 0);
-    std::vector<IoNode*> active_nodes(event_count);
+    std::vector<Node*> active_nodes(event_count);
     for (int i = 0; i < event_count; ++i)
     {
         // std::cout << "1" << std::endl;
-        IoNode* node = static_cast<IoNode*>(events_[i].data.ptr);
+        Node* node = static_cast<Node*>(events_[i].data.ptr);
         if (node)
         {
             node->expired_type = getTypeFromEpollEvents(events_[i].events); // set expired type

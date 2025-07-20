@@ -60,6 +60,7 @@ template <typename T = void> class Task : public BaseTask
         }
         else
         {
+            // TODO
             if (channel->is_empty())
             {
                 channel->close();

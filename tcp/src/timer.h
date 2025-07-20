@@ -1,6 +1,6 @@
 #pragma once
-#include "ionode.h"
 #include "timernode.h"
+#include "utils/channel.h"
 #include "utils/task.h"
 #include <coroutine>
 #include <cstddef>
@@ -25,7 +25,7 @@ class Timer
     using TimeSpec = utils::TimeSpec;
     Timer(IoContext* io_context);
     ~Timer();
-    void start();
+    auto start() -> utils::Task<>;
     auto add_delay(utils::BaseIdTask task, double delay) -> utils::Task<>;
     // cancel delay
     auto cancel_delay(size_t id) -> utils::Task<>;
@@ -33,10 +33,8 @@ class Timer
     void update();
 
   private:
-    void on_read();
     int timefd_;
     IoContext* io_context_;
-    IoNode io_node_;
     // 下次触发时间，就是文件描述符的到期时间
     TimeSpec nextExpire_;
     // 存放所有定时器

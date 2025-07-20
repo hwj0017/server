@@ -1,6 +1,5 @@
 #pragma once
 #include "epoller.h"
-#include "ionode.h"
 #include "timer.h"
 #include "utils/channel.h"
 #include "utils/task.h"
@@ -21,7 +20,6 @@ class IoContext
 {
   public:
     using Task = utils::Task<>;
-
     IoContext();
     ~IoContext() = default;
     // 由调用方保证在线程内
@@ -61,7 +59,8 @@ class IoContext
     };
     // not thread safe
     void run();
-    void add(int fd);
+    auto get_in_channel(int fd) -> utils::Channel<>*;
+    auto get_out_channel(int fd) -> utils::Channel<>*;
     void remove(int fd);
     // void enable_read(IoNode* node)
     // {
@@ -115,11 +114,17 @@ class IoContext
     // auto delay() -> Delay;
 
   private:
+    struct IoNode : Node
+    {
+        utils::Channel<> in_channel_{1};
+        utils::Channel<> out_channel_{0};
+        IoNode(int fd) : Node(fd) {}
+    };
     void handle_node(IoNode* node);
     Epoller epoller_;
     Waker waker_;
     Timer timer_;
-    std::unordered_map<int, IoNode*> nodes_;
+    std::unordered_map<int, std::unique_ptr<IoNode>> io_nodes_;
     bool need_wakeup_ = true;
     std::thread::id thread_id_{};
     std::vector<utils::BaseTask> tasks_{};

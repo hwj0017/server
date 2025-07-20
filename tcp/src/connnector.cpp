@@ -1,9 +1,9 @@
 #include "doublebuffer.h"
 #include "iocontext.h"
-#include "ionode.h"
 #include "socket.h"
 #include "tcp/connector.h"
 #include "utils/channel.h"
+#include "utils/log.h"
 #include "utils/task.h"
 #include <cassert>
 #include <coroutine>
@@ -28,15 +28,13 @@ struct Connector::Impl
     static constexpr size_t MaxSendBufferSize = 1024;
     Socket socket_;
     IoContext* io_context_;
-    IoNode node_;
-    utils::Channel<RecvResult> recv_channel_{1};
-    std::vector<char> recv_buffer_ = std::vector<char>(1024);
-    utils::Channel<> send_channel_{1};
+    utils::Channel<RecvResult> recv_channel_{0};
+    std::vector<char> recv_buffer_{};
     DoubleBuffer send_buffer_{MaxSendBufferSize};
 
     State state_ = State::Stopped;
     Impl(std::string_view server_ip, uint16_t port, IoContext* io_context_)
-        : socket_(Socket::createConnectorSocket({server_ip, port})), io_context_(io_context_), node_(socket_.fd())
+        : socket_(Socket::createConnectorSocket({server_ip, port})), io_context_(io_context_)
     {
         assert(socket_.fd() >= 0);
     }
@@ -44,7 +42,7 @@ struct Connector::Impl
     ~Impl()
     {
         stop_in_thread();
-        std::cout << "comnector stop" << std::endl;
+        utils::Logger::logger << "connector close" + std::to_string(socket_.fd()) + "\n";
     }
 
     auto start() -> utils::Task<>
@@ -54,21 +52,19 @@ struct Connector::Impl
         {
             co_return;
         }
+        state_ = State::Started;
         if (!co_await connect_complete())
         {
+            stop_in_thread();
             VOID_TASK_ERROR
         }
-        co_return start_really();
+        start_recv();
+        start_send();
     }
     auto connect_complete() -> utils::Task<>
     {
-        node_.type = IoNode::Type::Write;
-        io_context_->add(&node_);
-        utils::Channel<> channel{0};
-        node_.on_write_ = [&channel] { channel.push(); };
-
-        co_await channel.async_pop();
-        io_context_->remove(&node_);
+        auto out_channel_ = io_context_->get_out_channel(socket_.fd());
+        co_await out_channel_->async_pop();
         if (!is_connected())
         {
             VOID_TASK_ERROR
@@ -93,49 +89,52 @@ struct Connector::Impl
         }
         return true; // 连接成功
     }
-    void start_really()
+
+    auto start_recv() -> utils::Task<>
     {
-        state_ = State::Started;
-        node_.type = IoNode::Type::None;
-        io_context_->add(&node_);
-        node_.on_read_ = [this] { on_read(); };
-        node_.on_write_ = [this] { on_write(); };
-    }
-    void on_read()
-    {
-        if (auto result = socket_.recv(recv_buffer_); result.has_value())
+        auto in_channel = io_context_->get_in_channel(socket_.fd());
+
+        while (true)
         {
-            stop_in_thread();
-            return;
-        }
-        if (!recv_buffer_.empty())
-        {
-            recv_channel_.push({recv_buffer_});
-            recv_buffer_.clear();
-            if (recv_channel_.is_full())
+            if (!co_await recv_channel_.not_full() || !co_await in_channel->async_pop())
             {
-                io_context_->disable_read(&node_);
+                co_return;
+            }
+            utils::Logger::logger << "recv" + std::to_string(socket_.fd()) + "\n";
+
+            if (auto result = socket_.recv(recv_buffer_); !result.has_value())
+            {
+                stop_in_thread();
+                VOID_TASK_ERROR
+            }
+            if (!recv_buffer_.empty())
+            {
+                recv_channel_.push({recv_buffer_});
+                // TODO:
+                recv_buffer_.clear();
             }
         }
     }
 
-    void on_write()
+    auto start_send() -> utils::Task<>
     {
-        if (auto result = socket_.send(send_buffer_.get_data()); result.has_value())
+        auto out_channel = io_context_->get_out_channel(socket_.fd());
+
+        while (true)
         {
+            if (!co_await send_buffer_.not_empty() || !co_await out_channel->async_pop())
+            {
+                co_return;
+            }
+            utils::Logger::logger << "send" + std::to_string(socket_.fd()) + "\n";
+
+            auto result = socket_.send(send_buffer_.get_data());
+            if (!result.has_value())
+            {
+                stop_in_thread();
+                VOID_TASK_ERROR
+            }
             send_buffer_.remove(result.value());
-            if (!send_buffer_.is_full())
-            {
-                send_channel_.pop();
-            }
-            if (!send_buffer_.is_empty())
-            {
-                io_context_->enable_write(&node_);
-            }
-        }
-        else
-        {
-            stop_in_thread();
         }
     }
     void stop_in_thread()
@@ -145,11 +144,10 @@ struct Connector::Impl
             return;
         }
         state_ = State::Stopped;
-        node_.is_closed = true;
-        io_context_->remove(&node_);
+        io_context_->remove(socket_.fd());
         // may add ~Impl in queue
         recv_channel_.close();
-        send_channel_.close();
+        send_buffer_.close();
     }
 
     auto stop() -> utils::Task<>
@@ -157,19 +155,8 @@ struct Connector::Impl
         co_await io_context_->in_thread();
         stop_in_thread();
     }
-    auto async_recv_local() -> utils::Channel<RecvResult>::AsyncPop
-    {
-        // not read
-        if (!(node_.type && IoNode::Type::Read))
-        {
-            on_read();
-            if (recv_channel_.is_empty())
-            {
-                io_context_->enable_read(&node_);
-            }
-        }
-        return recv_channel_.async_pop();
-    }
+    auto async_recv_local() -> utils::Channel<RecvResult>::AsyncPop { return recv_channel_.async_pop(); }
+
     auto async_recv() -> utils::Task<RecvResult>
     {
         co_await io_context_->in_thread();
@@ -182,25 +169,19 @@ struct Connector::Impl
     }
     auto async_send_local(std::span<char> data) -> utils::Channel<>::NotFull
     {
-        // not write
-        if (!(node_.type && IoNode::Type::Write))
+        if (send_buffer_.is_empty())
         {
-            if (auto result = socket_.send(data); result.has_value())
-            {
-                data = {data.data() + result.value(), data.size() - result.value()};
-                send_buffer_.append(data);
-                io_context_->enable_write(&node_);
-                if (send_buffer_.is_full())
-                {
-                    send_channel_.push();
-                }
-            }
-            else
+            if (auto result = socket_.send(data); !result.has_value())
             {
                 stop_in_thread();
             }
+            else
+            {
+                data = {data.data() + result.value(), data.size() - result.value()};
+            }
         }
-        return send_channel_.not_full();
+        send_buffer_.append(data);
+        return send_buffer_.not_full();
     }
 
     auto async_send(std::span<char> data) -> utils::Task<>

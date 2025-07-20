@@ -2,6 +2,8 @@
 #include "utils/task.h"
 #include <iostream>
 #include <memory>
+#include <span>
+#include <string>
 #include <unistd.h>
 
 class VPNServer
@@ -33,6 +35,7 @@ class VPNServer
                 vpn(std::move(connection));
             }
         }
+        co_return;
     }
     auto vpn(std::shared_ptr<tcp::Connection> connection) -> utils::Task<>
     {
