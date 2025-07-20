@@ -15,6 +15,8 @@
 #include <iostream>
 #include <memory>
 #include <ostream>
+#include <span>
+#include <vector>
 
 namespace tcp
 {
@@ -26,18 +28,20 @@ struct Acceptor::Impl
         Started,
         Stopped
     };
-    static constexpr size_t kMaxAcceptChannelSize = 1024;
+    static constexpr size_t InitialAcceptBufferSize = 1024;
     Socket socket_;
     IoContext* io_context_;
     IoContextPool* io_context_pool_;
     IoNode node_;
-    utils::Channel<Socket> accept_channel{kMaxAcceptChannelSize};
+    utils::Channel<std::span<std::shared_ptr<Connection>>> accept_channel_{1};
+    std::vector<std::shared_ptr<Connection>> accept_buffer_{};
     State state = State::Stopped;
     Impl(std::string_view listen_ip, uint16_t port, IoContext* io_context, IoContextPool* io_context_pool)
         : socket_(Socket::createAcceptorSocket({listen_ip, port})), io_context_pool_(io_context_pool),
           io_context_(io_context), node_(socket_.fd())
     {
         assert(socket_.fd() != -1);
+        accept_buffer_.reserve(InitialAcceptBufferSize);
     }
     // run in queue
     ~Impl()
@@ -53,35 +57,32 @@ struct Acceptor::Impl
             co_return;
         }
         state = State::Started;
-        node_.type = IoNode::Type::Read;
+        node_.type = IoNode::Type::None;
         io_context_->add(&node_);
-        node_.read_task = start_accept();
+        node_.on_read_ = [this]() { on_read(); };
     }
-    auto start_accept() -> utils::Task<>
+    void on_read()
     {
+        accept_buffer_.reserve(InitialAcceptBufferSize);
         while (true)
         {
-            if (accept_channel.is_full())
-            {
-                io_context_->disable_read(&node_);
-                if (!co_await accept_channel.not_full())
-                {
-                    VOID_TASK_ERROR
-                }
-                io_context_->enable_read(&node_);
-            }
-            // resume by iocontext
-            co_await std::suspend_always{};
             auto client_socket_ = socket_.accept();
-            if (client_socket_.has_value())
-            {
-                accept_channel.push(std::move(client_socket_.value()));
-            }
-            else
+            if (!client_socket_.has_value())
             {
                 stop_in_thread();
-                VOID_TASK_ERROR
+                return;
             }
+            if (client_socket_->fd() == -1)
+            {
+                if (accept_buffer_.size() > 0)
+                {
+                    accept_channel_.push({accept_buffer_});
+                    accept_buffer_.clear();
+                }
+                return;
+            }
+            accept_buffer_.emplace_back(
+                std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext()));
         }
     }
     void stop_in_thread()
@@ -91,10 +92,9 @@ struct Acceptor::Impl
             return;
         }
         state = State::Stopped;
-        node_.is_closed = true;
-        io_context_->remove(&node_);
         // may add ~Impl in queue
-        accept_channel.close();
+        accept_channel_.close();
+        io_context_->remove(&node_);
     }
     auto stop() -> utils::Task<>
     {
@@ -102,20 +102,30 @@ struct Acceptor::Impl
         stop_in_thread();
     }
 
+    auto async_accept_local() -> utils::Channel<AcceptResult>::AsyncPop
+    {
+        // not read
+        if (!(node_.type && IoNode::Type::Read))
+        {
+            on_read();
+            if (accept_channel_.is_empty())
+            {
+                io_context_->enable_read(&node_);
+            }
+        }
+        return accept_channel_.async_pop();
+    }
     auto async_accept() -> utils::Task<AcceptResult>
     {
         co_await io_context_->in_thread();
-        auto client_socket_ = co_await accept_channel.async_pop();
-        if (!client_socket_.has_value())
+        if (auto res = co_await async_accept_local(); res.has_value())
+        {
+            co_return res.value();
+        }
+        else
         {
             VALUE_TASK_ERROR
         }
-        co_return std::make_shared<Connection>(std::move(client_socket_.value()), io_context_pool_->getIoContext());
-    }
-    auto reset_accept() -> utils::Task<>
-    {
-        co_await io_context_->in_thread();
-        accept_channel.reset();
     }
 };
 
@@ -134,7 +144,8 @@ auto Acceptor::start() -> utils::Task<> { return impl_->start(); }
 auto Acceptor::stop() -> utils::Task<> { return impl_->stop(); }
 
 auto Acceptor::async_accept() -> utils::Task<AcceptResult> { return impl_->async_accept(); }
-auto Acceptor::reset_accept() -> utils::Task<> { return impl_->reset_accept(); }
+
+auto Acceptor::async_accept_local() -> utils::Channel<AcceptResult>::AsyncPop { return impl_->async_accept_local(); }
 auto Acceptor::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 
 } // namespace tcp

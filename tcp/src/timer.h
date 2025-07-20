@@ -33,7 +33,7 @@ class Timer
     void update();
 
   private:
-    auto on_read() -> utils::Task<>;
+    void on_read();
     int timefd_;
     IoContext* io_context_;
     IoNode io_node_;

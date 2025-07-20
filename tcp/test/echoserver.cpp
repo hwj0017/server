@@ -21,15 +21,15 @@ class EchoServer
         acceptor->start();
         while (true)
         {
-            auto connection = co_await acceptor->async_accept();
-            if (connection.has_value())
+            auto connections = co_await acceptor->async_accept();
+            if (!connections.has_value())
             {
-                connection.value()->start();
-                echo(std::move(connection.value()));
+                VOID_TASK_ERROR
             }
-            else
+            for (auto&& connection : connections.value())
             {
-                break;
+                connection->start();
+                echo(std::move(connection));
             }
         }
     }
@@ -38,15 +38,12 @@ class EchoServer
         while (true)
         {
             auto message = co_await connection->async_recv();
-            if (message.has_value())
+            if (!message.has_value())
             {
-                std::cout << message.value() << std::endl;
-                co_await connection->async_send(message.value());
+                VOID_TASK_ERROR
             }
-            else
-            {
-                break;
-            }
+            std::cout << message->data() << std::endl;
+            co_await connection->async_send(message.value());
         }
     }
     tcp::Server server_{};

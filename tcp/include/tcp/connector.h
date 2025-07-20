@@ -5,16 +5,16 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 
 namespace tcp
 {
 class IoContext;
-class Connector : public std::enable_shared_from_this<Connector>
+class Connector
 {
   public:
-    using RecvResult = std::string;
-    using SendResult = void;
+    using RecvResult = std::span<char>;
 
     Connector(std::string_view server_ip, uint16_t port, IoContext* io_context);
     Connector(const Connector&) = delete;
@@ -23,9 +23,10 @@ class Connector : public std::enable_shared_from_this<Connector>
     auto stop() -> utils::Task<>;
 
     auto async_recv() -> utils::Task<RecvResult>;
-    auto async_send(std::string_view data) -> utils::Task<SendResult>;
-    auto reset_recv() -> utils::Task<>;
-    auto reset_send() -> utils::Task<>;
+    auto async_recv_local() -> utils::Channel<RecvResult>::AsyncPop;
+
+    auto async_send(std::span<char> data) -> utils::Task<>;
+    auto async_send_local(std::span<char> data) -> utils::Channel<>::NotFull;
 
   private:
     struct Impl;

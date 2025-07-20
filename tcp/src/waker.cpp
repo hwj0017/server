@@ -29,19 +29,15 @@ void Waker::start()
 {
     node_.type = IoNode::Type::Read;
     io_context_->add(&node_);
-    node_.read_task = clean();
+    node_.on_read_ = [this]() { on_read(); };
 }
-auto Waker::clean() -> utils::Task<>
+void Waker::on_read()
 {
-    while (true)
+    uint64_t value = 1;
+    ssize_t n = ::read(fd_, &value, sizeof(value));
+    if (n != sizeof(value))
     {
-        co_await std::suspend_always{};
-        uint64_t value = 1;
-        ssize_t n = ::read(fd_, &value, sizeof(value));
-        if (n != sizeof(value))
-        {
-            throw std::runtime_error("Failed to read to waker");
-        }
+        throw std::runtime_error("Failed to read to waker");
     }
 }
 

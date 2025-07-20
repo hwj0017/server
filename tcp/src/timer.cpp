@@ -28,7 +28,7 @@ void Timer::start()
 {
     io_node_.type = IoNode::Type::Read;
     io_context_->add(&io_node_);
-    io_node_.read_task = on_read();
+    io_node_.on_read_ = [this]() { on_read(); };
 }
 Timer::~Timer()
 {
@@ -36,31 +36,27 @@ Timer::~Timer()
     ::close(timefd_);
 }
 
-auto Timer::on_read() -> utils::Task<>
+void Timer::on_read()
 {
-    while (true)
+    auto now = TimeSpec::getNow();
+    // 读出定时器
+    uint64_t count = 0;
+    ssize_t n = ::read(timefd_, &count, sizeof(count));
+    assert(n == sizeof(count));
+    std::vector<std::unique_ptr<TimerNode>> temp_nodes;
+    // 遍历定时器
+    for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
     {
-        co_await std::suspend_always{};
-        auto now = TimeSpec::getNow();
-        // 读出定时器
-        uint64_t count = 0;
-        ssize_t n = ::read(timefd_, &count, sizeof(count));
-        assert(n == sizeof(count));
-        std::vector<std::unique_ptr<TimerNode>> temp_nodes;
-        // 遍历定时器
-        for (auto it = time_queue_.begin(); it != time_queue_.end() && (*it)->expired_time_ <= now;)
-        {
-            auto id = (*it)->task_.id();
-            it = time_queue_.erase(it);
-            auto it_1 = timer_nodes_.find(id);
-            assert(it_1 != timer_nodes_.end());
-            temp_nodes.emplace_back(std::move(it_1->second));
-            timer_nodes_.erase(it_1);
-        }
-        for (auto& node : temp_nodes)
-        {
-            node->task_.resume();
-        }
+        auto id = (*it)->task_.id();
+        it = time_queue_.erase(it);
+        auto it_1 = timer_nodes_.find(id);
+        assert(it_1 != timer_nodes_.end());
+        temp_nodes.emplace_back(std::move(it_1->second));
+        timer_nodes_.erase(it_1);
+    }
+    for (auto& node : temp_nodes)
+    {
+        node->task_.resume();
     }
 }
 

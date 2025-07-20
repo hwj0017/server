@@ -61,44 +61,44 @@ class IoContext
     };
     // not thread safe
     void run();
-    void add(IoNode* node);
-    void remove(IoNode* node);
-    void enable_read(IoNode* node)
-    {
-        if (node->type && IoNode::Type::Read)
-        {
-            return;
-        }
-        node->type |= IoNode::Type::Read;
-        epoller_.update(node);
-    }
-    void enable_write(IoNode* node)
-    {
-        if (node->type && IoNode::Type::Write)
-        {
-            return;
-        }
-        node->type |= IoNode::Type::Write;
-        epoller_.update(node);
-    }
-    void disable_read(IoNode* node)
-    {
-        if (!(node->type && IoNode::Type::Read))
-        {
-            return;
-        }
-        node->type &= IoNode::Type::Write;
-        epoller_.update(node);
-    }
-    void disable_write(IoNode* node)
-    {
-        if (!(node->type && IoNode::Type::Write))
-        {
-            return;
-        }
-        node->type &= IoNode::Type::Read;
-        epoller_.update(node);
-    }
+    void add(int fd);
+    void remove(int fd);
+    // void enable_read(IoNode* node)
+    // {
+    //     if (node->type && IoNode::Type::Read)
+    //     {
+    //         return;
+    //     }
+    //     node->type |= IoNode::Type::Read;
+    //     epoller_.update(node);
+    // }
+    // void enable_write(IoNode* node)
+    // {
+    //     if (node->type && IoNode::Type::Write)
+    //     {
+    //         return;
+    //     }
+    //     node->type |= IoNode::Type::Write;
+    //     epoller_.update(node);
+    // }
+    // void disable_read(IoNode* node)
+    // {
+    //     if (!(node->type && IoNode::Type::Read))
+    //     {
+    //         return;
+    //     }
+    //     node->type &= IoNode::Type::Write;
+    //     epoller_.update(node);
+    // }
+    // void disable_write(IoNode* node)
+    // {
+    //     if (!(node->type && IoNode::Type::Write))
+    //     {
+    //         return;
+    //     }
+    //     node->type &= IoNode::Type::Read;
+    //     epoller_.update(node);
+    // }
 
     // thread safe
     bool is_in_thread() { return thread_id_ == std::this_thread::get_id(); }

@@ -9,6 +9,7 @@ namespace tcp
 
 struct IoNode
 {
+    using Callback = std::function<void()>;
     enum class Type : u_int8_t
     {
         None = 0,
@@ -21,8 +22,8 @@ struct IoNode
     Type type = Type::None;
     Type expired_type = Type::None;
     bool is_closed = false;
-    utils::Task<> read_task;
-    utils::Task<> write_task;
+    Callback on_read_;
+    Callback on_write_;
     IoNode(int fd) : fd(fd) {}
 
 }; // namespace tcp

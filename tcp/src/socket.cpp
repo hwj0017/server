@@ -1,6 +1,8 @@
 #include "socket.h"
 #include "inetaddress.h"
 #include "iocontext.h"
+#include "utils/log.h"
+#include <cassert>
 #include <cstddef>
 #include <fcntl.h>
 #include <string>
@@ -45,90 +47,83 @@ auto Socket::accept() -> AcceptResult
     auto fd = ::accept(fd_, reinterpret_cast<sockaddr*>(&address.addr_), &address.addrLen_);
     if (fd < 0)
     {
-        return {};
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+        {
+            return {};
+        }
+        return Socket(-1, address);
     }
+    utils::Logger::logger << "connection fd " + std::to_string(fd) + "\n";
     return {createConnecionSocket(fd, address)};
 }
 
-auto Socket::recv() -> RecvResult
+auto Socket::recv(std::vector<char>& data) -> RecvResult
 {
-    size_t total_bytes_received = 0;
-    std::string data;
     while (true)
     {
         auto current_size = data.size();
         data.resize(current_size + kRecvBufferSize);
         auto bytes_received = ::recv(fd_, data.data() + current_size, kRecvBufferSize, 0);
-        if (bytes_received <= 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+        if (bytes_received <= 0)
         {
-            data.resize(current_size);
-            return {};
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+            {
+                data.resize(current_size);
+                return {};
+            }
+            else
+            {
+                data.resize(current_size);
+                return {current_size};
+            }
         }
         if (bytes_received < kRecvBufferSize)
         {
             data.resize(current_size + bytes_received);
-            return {std::move(data)};
+            return {current_size + bytes_received};
         }
     }
 }
 
-auto Socket::send(std::string_view data) -> SendResult
+auto Socket::send(std::span<char> data) -> SendResult
 {
-    size_t total_bytes_sent = 0;
     auto bytes_sent = ::send(fd_, data.data(), data.size(), 0);
-    if (bytes_sent <= 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+    if (bytes_sent <= 0)
     {
-        return {};
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+        {
+            return {};
+        }
+        else
+        {
+            return {0};
+        }
     }
-    total_bytes_sent += bytes_sent;
-    return {total_bytes_sent};
+    return {bytes_sent};
 }
 
 auto Socket::createAcceptorSocket(const InetAddress& listen_address) -> Socket
 {
     int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0)
-    {
-        return Socket(-1, InetAddress());
-    }
-    if (::bind(fd, reinterpret_cast<const sockaddr*>(&listen_address.addr_), listen_address.addrLen_) < 0)
-    {
-        ::close(fd);
-        return Socket(-1, InetAddress());
-    }
-    if (::listen(fd, SOMAXCONN) < 0)
-    {
-        ::close(fd);
-        return Socket(-1, InetAddress());
-    }
+    assert(fd >= 0);
+    assert(::bind(fd, reinterpret_cast<const sockaddr*>(&listen_address.addr_), listen_address.addrLen_) >= 0);
+    assert(::listen(fd, SOMAXCONN) >= 0);
     return Socket(fd, listen_address);
 }
 
 auto Socket::createConnecionSocket(int fd, const InetAddress& client_address) -> Socket
 {
+    assert(fd >= 0);
     fcntl(fd, F_SETFL, O_NONBLOCK | O_CLOEXEC); // Set non-blocking and close-on-exec flags
-    if (fd < 0)
-    {
-        return Socket(-1, InetAddress());
-    }
     return Socket(fd, client_address);
 }
 
 auto Socket::createConnectorSocket(const InetAddress& server_address) -> Socket
 {
     int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0)
-    {
-        return Socket(-1, InetAddress());
-    }
-    if (::connect(fd, reinterpret_cast<const sockaddr*>(&server_address.addr_), server_address.addrLen_) < 0)
-    {
-        if (errno != EINPROGRESS)
-        {
-            ::close(fd);
-            return Socket(fd, InetAddress());
-        }
-    }
+    assert(fd >= 0);
+    assert(::connect(fd, reinterpret_cast<const sockaddr*>(&server_address.addr_), server_address.addrLen_) >= 0 ||
+           errno == EINPROGRESS);
     return Socket(fd, server_address);
 }
 } // namespace tcp

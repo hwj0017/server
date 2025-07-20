@@ -19,7 +19,7 @@ class Waker
     void wakeup();
 
   private:
-    auto clean() -> utils::Task<>;
+    void on_read();
     int fd_;
     IoContext* io_context_;
     IoNode node_;

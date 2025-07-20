@@ -51,11 +51,11 @@ void IoContext::handle_node(IoNode* node)
     node->type = node->type & IoNode::Type::Read;
     if (!node->is_closed && (node->expired_type && IoNode::Type::Read))
     {
-        node->read_task.resume();
+        node->on_read_();
     }
     if (!node->is_closed && (node->expired_type && IoNode::Type::Write))
     {
-        node->write_task.resume();
+        node->on_write_();
     }
 }
 
