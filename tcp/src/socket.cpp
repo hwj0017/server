@@ -85,7 +85,7 @@ auto Socket::recv(std::vector<char>& data) -> RecvResult
     }
 }
 
-auto Socket::send(std::span<char> data) -> SendResult
+auto Socket::send(std::string_view data) -> SendResult
 {
     auto bytes_sent = ::send(fd_, data.data(), data.size(), 0);
     if (bytes_sent <= 0)

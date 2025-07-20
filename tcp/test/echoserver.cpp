@@ -42,7 +42,7 @@ class EchoServer
             {
                 VOID_TASK_ERROR
             }
-            std::cout << message->data() << std::endl;
+            std::cout << message.value() << std::endl;
             co_await connection->async_send(message.value());
         }
     }

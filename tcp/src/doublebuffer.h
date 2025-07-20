@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 namespace tcp
@@ -25,7 +26,7 @@ class DoubleBuffer
     ~DoubleBuffer() = default;
     bool is_full() const { return buffer0_.size() + buffer1_.size() >= size; }
     bool is_empty() const { return buffer0_.empty() && buffer1_.empty(); }
-    void append(std::span<char> data)
+    void append(std::string_view data)
     {
         if (data.size() == 0)
         {
@@ -72,7 +73,7 @@ class DoubleBuffer
             channel_.pop();
         }
     }
-    std::span<char> get_data() { return std::span<char>(buffer0_.data() + begin_pos_, buffer0_.size() - begin_pos_); }
+    std::string_view get_data() { return std::string_view(buffer0_.data() + begin_pos_, buffer0_.size() - begin_pos_); }
     auto not_empty() -> utils::Channel<>::NotEmpty { return channel_.not_empty(); }
     auto not_full() -> utils::Channel<>::NotFull { return channel_.not_full(); }
     void close() { channel_.close(); }

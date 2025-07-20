@@ -109,7 +109,7 @@ struct Connector::Impl
             }
             if (!recv_buffer_.empty())
             {
-                recv_channel_.push({recv_buffer_});
+                recv_channel_.push({recv_buffer_.data(), recv_buffer_.size()});
                 // TODO:
                 recv_buffer_.clear();
             }
@@ -167,7 +167,7 @@ struct Connector::Impl
         }
         co_return recv_res.value();
     }
-    auto async_send_local(std::span<char> data) -> utils::Channel<>::NotFull
+    auto async_send_local(std::string_view data) -> utils::Channel<>::NotFull
     {
         if (send_buffer_.is_empty())
         {
@@ -177,14 +177,14 @@ struct Connector::Impl
             }
             else
             {
-                data = {data.data() + result.value(), data.size() - result.value()};
+                data.remove_prefix(result.value());
             }
         }
         send_buffer_.append(data);
         return send_buffer_.not_full();
     }
 
-    auto async_send(std::span<char> data) -> utils::Task<>
+    auto async_send(std::string_view data) -> utils::Task<>
     {
         co_await io_context_->in_thread();
         if (!co_await async_send_local(data))
@@ -203,11 +203,11 @@ auto Connector::stop() -> utils::Task<> { return impl_->stop(); }
 auto Connector::async_recv_local() -> utils::Channel<RecvResult>::AsyncPop { return impl_->async_recv_local(); }
 auto Connector::async_recv() -> utils::Task<RecvResult> { return impl_->async_recv(); }
 
-auto Connector::async_send_local(std::span<char> data) -> utils::Channel<>::NotFull
+auto Connector::async_send_local(std::string_view data) -> utils::Channel<>::NotFull
 {
     return impl_->async_send_local(data);
 }
-auto Connector::async_send(std::span<char> data) -> utils::Task<> { return impl_->async_send(data); }
+auto Connector::async_send(std::string_view data) -> utils::Task<> { return impl_->async_send(data); }
 
 auto Connector::delay_destroy(std::unique_ptr<Impl> impl) -> utils::Task<> { co_await impl->io_context_->queue(); }
 } // namespace tcp

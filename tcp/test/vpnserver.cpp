@@ -50,7 +50,7 @@ class VPNServer
             {
                 VOID_TASK_ERROR
             }
-            std::cout << message->data() << std::endl;
+            std::cout << message.value() << std::endl;
             co_await connector->async_send(message.value());
 
             auto message1 = co_await connector->async_recv();
@@ -58,7 +58,7 @@ class VPNServer
             {
                 VOID_TASK_ERROR
             }
-            std::cout << message1->data() << std::endl;
+            std::cout << message1.value() << std::endl;
             co_await connection->async_send(message1.value());
         }
     }

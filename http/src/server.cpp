@@ -7,9 +7,11 @@
 #include "utils/task.h"
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string>
 #include <sys/types.h>
 namespace http
@@ -37,15 +39,15 @@ struct Server::Impl
         co_await acceptor->start();
         while (true)
         {
-            auto connection = co_await acceptor->async_accept();
-            if (connection.has_value())
+            auto connections = co_await acceptor->async_accept();
+            if (!connections.has_value())
             {
-                connection.value()->start();
-                http(std::move(connection.value()));
+                VOID_TASK_ERROR
             }
-            else
+            for (auto&& connection : connections.value())
             {
-                break;
+                connection->start();
+                http(std::move(connection));
             }
         }
     }
@@ -57,11 +59,10 @@ struct Server::Impl
             auto buf = co_await connection->async_recv();
             if (!buf.has_value())
             {
-                connection->stop();
-                break;
+                VOID_TASK_ERROR
             }
             std::cout << "recv: " << buf.value() << std::endl;
-            if (!context.parseRequest(std::move(buf.value())))
+            if (!context.parseRequest(buf.value()))
             {
                 co_await connection->async_send("HTTP/1.1 400 Bad Request\r\n\r\n");
                 connection->stop();

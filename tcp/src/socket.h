@@ -34,7 +34,7 @@ class Socket
 
     auto accept() -> AcceptResult;
     auto recv(std::vector<char>& data) -> RecvResult;
-    auto send(std::span<char> data) -> SendResult;
+    auto send(std::string_view data) -> SendResult;
     static auto createAcceptorSocket(const InetAddress& listen_address) -> Socket;
     static auto createConnecionSocket(int fd, const InetAddress& client_address) -> Socket;
     static auto createConnectorSocket(const InetAddress& server_address) -> Socket;

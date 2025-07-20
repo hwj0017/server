@@ -23,8 +23,8 @@ int main()
     saddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     int res = connect(sockfd, (struct sockaddr*)&saddr, sizeof(saddr));
     assert(res != -1);
-    std::string str = "GET /../test/utils/test.cpp HTTP/1.0\r\nHost : 127.0.0.1 : 1234\r\nConnection : Keep -alive\r\n"
-                      "Content -Length : "
+    std::string str = "GET /../test/utils/test.cpp HTTP/1.0\r\nHost : 127.0.0.1 : 1234\r\nConnection : Keep-alive\r\n"
+                      "Content-Length : "
                       "12\r\n\r\nhello world";
     char buf[BUFFER_SIZE];
     // std::cin >> str;

@@ -9,7 +9,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
-constexpr int BUFFER_SIZE = 100000;
+constexpr int BUFFER_SIZE = 1000000;
 int main()
 {
     // 创建套接子

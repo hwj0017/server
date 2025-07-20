@@ -14,7 +14,7 @@ class IoContext;
 class Connector
 {
   public:
-    using RecvResult = std::span<char>;
+    using RecvResult = std::string_view;
 
     Connector(std::string_view server_ip, uint16_t port, IoContext* io_context);
     Connector(const Connector&) = delete;
@@ -25,8 +25,8 @@ class Connector
     auto async_recv() -> utils::Task<RecvResult>;
     auto async_recv_local() -> utils::Channel<RecvResult>::AsyncPop;
 
-    auto async_send(std::span<char> data) -> utils::Task<>;
-    auto async_send_local(std::span<char> data) -> utils::Channel<>::NotFull;
+    auto async_send(std::string_view data) -> utils::Task<>;
+    auto async_send_local(std::string_view data) -> utils::Channel<>::NotFull;
 
   private:
     struct Impl;

@@ -6,5 +6,5 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Debug)
 
 add_subdirectory(tcp)
-# add_subdirectory(http)
+add_subdirectory(http)
 # add_subdirectory(rpc)
